@@ -2,14 +2,19 @@
 #
 # BOSEST.pm (c) by Dominik Karall, 2016-2017
 # dominik karall at gmail dot com
-# $Id: 98_BOSEST.pm 21773 2020-04-25 17:30:30Z dominik $
+# $Id: 98_BOSEST.pm 18548 2019-02-09 22:01:52Z dominik $
 #
 # FHEM module to communicate with BOSE SoundTouch system
 # API as defined in BOSE SoundTouchAPI_WebServices_v1.0.1.pdf
 #
-# Version: 2.2.1
+# Version: 3.0beta
 #
 #############################################################
+#
+# v3.0beta - 2026
+# - FEATURE: set ... saveState restoreState restoreVolAndOff (betateilchen)
+# - FEATURE: add PRODUCT TV and HDMI_1 to source for ST300 (FlatTV)
+# - FEATURE: set ... origin <string> added (phenning)
 #
 # v2.2.1 - 20181127
 # - CHANGE:  add staticIPs documentation in commandref
@@ -265,6 +270,7 @@ my $BOSEST_GOOGLE_NOT_AVAILABLE_TEXT = "Hello, I'm sorry, but Google Translate i
 my $BOSEST_GOOGLE_NOT_AVAILABLE_LANG = "en";
 my $BOSEST_READ_CMDREF_TEXT = "Hello, I'm sorry, but you need to install new libraries, please read command reference.";
 my $BOSEST_READ_CMDREF_LANG = "en";
+my $BOSEST_VERSION = "3.0beta";
 
 sub BOSEST_Initialize($) {
     my ($hash) = @_;
@@ -321,6 +327,7 @@ sub BOSEST_Define($$) {
                        "channel_12 channel_13 channel_14 channel_15 channel_16 ".
                        "channel_17 channel_18 channel_19 channel_20 ignoreDeviceIDs ".
                        "ttsDirectory ttsLanguage ttsSpeakOnError ttsVolume ".
+                       "originHandler ".
                        "speakChannel autoZone";
         my @attrListArr = split(" ", $attrList);
         
@@ -340,8 +347,9 @@ sub BOSEST_Define($$) {
     $hash->{helper}{supportedSourcesCmds} = "";
     $hash->{helper}{supportedBassCmds} = "";
     
-    if (int(@a) < 3) {
-        Log3 $hash, 3, "BOSEST: BOSE SoundTouch v2.2.1";
+     if (int(@a) < 3) {
+        #-- NEW phenning
+        Log3 $hash, 3, "BOSEST: BOSE SoundTouch $BOSEST_VERSION";
         #start discovery process 30s delayed
         InternalTimer(gettimeofday()+30, "BOSEST_startDiscoveryProcess", $hash, 0);
         
@@ -374,10 +382,11 @@ sub BOSEST_Attribute($$$$) {
     return undef;
 }
 
-sub BOSEST_Set($@) {
-    my ($hash, $name, @params) = @_;
-    my $workType = shift(@params);
-    
+sub BOSEST_Set($@) {   
+    my ($hash, $name, $workType, @params) = @_;
+    Log3 $hash, 3, "BOSEST: BOSEST_Set: $name, $workType\n".Dumper(\@params) if ($workType ne "?");
+    Log3 $hash, 1, "BOSEST: BOSEST_Set: $name, $workType\n".Dumper(\@params) if ($workType eq "source");
+
     #get quoted text from params
     my $blankParams = join(" ", @params);
     my @params2;
@@ -396,16 +405,18 @@ sub BOSEST_Set($@) {
                 "stop:noArg pause:noArg channel:1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20 ".
                 "volume:slider,0,1,100 ".$hash->{helper}{supportedBassCmds}." ".
                 "saveChannel:07,08,09,10,11,12,13,14,15,16,17,18,19,20 ".
+                #-- NEW betateilchen & phenning
+                "origin saveState:noArg restoreState restoreVolAndOff ".
                 "addDLNAServer:".$hash->{helper}{dlnaServers}." ".
                 "removeDLNAServer:".ReadingsVal($hash->{NAME}, "connectedDLNAServers", "noArg");
-
+ 
     # check parameters for set function
     #DEVELOPNEWFUNCTION-1
     if($workType eq "?") {
         if($hash->{DEVICEID} eq "0") {
             return ""; #no arguments for server
         } else {
-            return SetExtensions($hash, $list, $name, $workType, @params);
+           return SetExtensions($hash, $list, $name, $workType, @params);
         }
     }
     
@@ -445,12 +456,13 @@ sub BOSEST_Set($@) {
         #params[0] = repeat value
         BOSEST_setRepeat($hash, $params[0]);
     } elsif($workType eq "recent") {
-        return "BOSEST: recebt requires number as additional parameter" if(int(@params) < 1);
+        return "BOSEST: recent requires number as additional parameter" if(int(@params) < 1);
         #params[0] = recent value
         BOSEST_setRecent($hash, $params[0]);
     } elsif($workType eq "source") {
-        return "BOSEST: source requires bluetooth/aux as additional parameter" if(int(@params) < 1);
+        return "BOSEST: source requires tv/bluetooth/aux as additional parameter" if(int(@params) < 1);
         #params[0] = source value
+        fhem("setreading $hash->{NAME} origin ".uc($params[0]));
         BOSEST_setSource($hash, $params[0]);
     } elsif($workType eq "addDLNAServer") {
         return "BOSEST: addDLNAServer requires DLNA friendly name as additional parameter" if(int(@params) < 1);
@@ -532,10 +544,35 @@ sub BOSEST_Set($@) {
         return "BOSEST: removeFromZone requires deviceID as additional parameter" if(int(@params) < 1);
         #params[0] = deviceID channel
         BOSEST_removeFromZone($hash, $params[0]);
+    #-- NEW phenning
+    } elsif($workType eq "origin"){
+        return "BOSEST: origin requires string as additional parameter" if(int(@params) < 1);
+        if( lc($params[0]) =~ /(tv)|(bluetooth)|(aux)/ ){
+          readingsSingleUpdate($hash,"origin",uc($params[0]),0);
+          return BOSEST_setSource($hash, lc($params[0]));
+        }
+        readingsSingleUpdate($hash,"origin",$params[0],1);
+        my $handler = AttrVal($hash->{NAME}, "originHandler",undef);
+        if(defined($handler)){
+          $handler =~ s/\$DEVICE/$name/;
+          $handler =~ s/\$ORIGIN/$params[0]/;
+          eval($handler);
+        } else{
+          Log 1,"BOSEST: no originHandler defined, would call originHandler(\"$name\",\"$params[0]\")";
+        }
+    #-- NEW betateilchen
+    } elsif($workType eq "saveState") {
+        BOSEST_saveCurrentState($hash);
+    } elsif($workType eq "restoreState") {
+        my $wait = (defined($params[0]) && looks_like_number($params[0]))?$params[0]:0;
+        InternalTimer(gettimeofday()+$wait, "BOSEST_restoreSavedState", $hash, 0);
+    } elsif($workType eq "restoreVolAndOff") {
+        my $wait = (defined($params[0]) && looks_like_number($params[0]))?$params[0]:0;
+        InternalTimer(gettimeofday()+$wait, "BOSEST_restoreVolumeAndOff", $hash, 0);
+    #-- end NEW
     } else {
         return SetExtensions($hash, $list, $name, $workType, @params);
     }
-    
     return undef;
 }
 
@@ -881,12 +918,24 @@ sub BOSEST_setRepeat($$) {
 
 sub BOSEST_setSource($$) {
     my ($hash, $source) = @_;
-    
     $hash->{helper}{switchSource} = uc $source;
     
-    if($hash->{helper}{switchSource} eq "") {
+    #-- NEW FlatTV
+    if($hash->{helper}{switchSource} eq "TV"  || $hash->{helper}{switchSource} eq "HDMI1") {
+        my $sourceAccount = $hash->{helper}{switchSource} eq "TV" ? "TV" : "HDMI_1";
+        my $postXml = "<ContentItem source=\"".
+                  "PRODUCT".
+                  "\" sourceAccount=\"".
+                  $sourceAccount.
+                  "\" isPresetable=\"true\">".
+                  "</ContentItem>";
+
+        if(BOSEST_HTTPPOST($hash, "/select", $postXml)) {
+        }
+        $hash->{helper}{switchSource} = "";
         return undef;
     }
+    #-- end NEW
     
     if($hash->{helper}{switchSource} eq "BT-DISCOVER" &&
        ReadingsVal($hash->{NAME}, "connectionStatusInfo", "") eq "DISCOVERABLE") {
@@ -1054,6 +1103,7 @@ sub BOSEST_speak($$$$$) {
     return undef;
 }
 
+#-- NEW betateilchen
 sub BOSEST_saveCurrentState($) {
     my ($hash) = @_;
     
@@ -1076,23 +1126,22 @@ sub BOSEST_restoreSavedState($) {
     BOSEST_setVolume($hash, $hash->{helper}{savedState}{volume});
     BOSEST_setBass($hash, $hash->{helper}{savedState}{bass});
     
-    #bose off when source was off
+    #-- switch off when source was off
     if($hash->{helper}{savedState}{source} eq "STANDBY" or $hash->{helper}{savedState}{source} eq "INVALID_SOURCE") {
-        BOSEST_off($hash);
+      BOSEST_off($hash);
     } else {
-        BOSEST_setContentItem($hash, $hash->{helper}{savedState}{contentItemItemName},
-                              $hash->{helper}{savedState}{contentItemType},
-                              $hash->{helper}{savedState}{contentItemLocation},
-                              $hash->{helper}{savedState}{contentItemSource},
-                              $hash->{helper}{savedState}{contentItemSourceAccount});
-        
-        if($hash->{helper}{savedState}{playStatus} eq "STOP_STATE") {
-            InternalTimer(gettimeofday()+0.8, "BOSEST_stop", $hash, 0);
-        } elsif($hash->{helper}{savedState}{playStatus} eq "PAUSE_STATE") {
-            InternalTimer(gettimeofday()+0.8, "BOSEST_pause", $hash, 0);
-        }
+      BOSEST_setContentItem($hash, $hash->{helper}{savedState}{contentItemItemName},
+                          $hash->{helper}{savedState}{contentItemType},
+                          $hash->{helper}{savedState}{contentItemLocation},
+                          $hash->{helper}{savedState}{contentItemSource},
+                          $hash->{helper}{savedState}{contentItemSourceAccount});
     }
-
+    if($hash->{helper}{savedState}{playStatus} eq "STOP_STATE") {
+        InternalTimer(gettimeofday()+0.8, "BOSEST_stop", $hash, 0);
+    } elsif($hash->{helper}{savedState}{playStatus} eq "PAUSE_STATE") {
+        InternalTimer(gettimeofday()+0.8, "BOSEST_pause", $hash, 0);
+    }
+    
     return undef;
 }
 
@@ -1103,13 +1152,14 @@ sub BOSEST_restoreVolumeAndOff($) {
     BOSEST_setBass($hash, $hash->{helper}{savedState}{bass});
 
     BOSEST_setContentItem($hash, $hash->{helper}{savedState}{contentItemItemName},
-                  $hash->{helper}{savedState}{contentItemType},
-                  $hash->{helper}{savedState}{contentItemLocation},
-                  $hash->{helper}{savedState}{contentItemSource},
-                  $hash->{helper}{savedState}{contentItemSourceAccount});
+              $hash->{helper}{savedState}{contentItemType},
+              $hash->{helper}{savedState}{contentItemLocation},
+              $hash->{helper}{savedState}{contentItemSource},
+              $hash->{helper}{savedState}{contentItemSourceAccount});
 
     BOSEST_off($hash);
 }
+#-- end NEW
 
 sub BOSEST_downloadGoogleNotAvailable($) {
     my ($hash) = @_;
@@ -1408,6 +1458,55 @@ sub BOSEST_playTrack($$) {
     }
     
     return undef;
+}
+
+#-- NEW phenning
+sub BOSEST_playInfo($){  
+  my ($hash) = @_;
+  my $name = $hash->{NAME};
+  my $retl;
+  
+  #-- current state
+  my $cur = ReadingsVal($name,"state","unknown");
+  my $cha = ReadingsVal($name,"channel","");
+  my $itm = ReadingsVal($name,"contentItemItemName", "");
+  my $loc = ReadingsVal($name,"contentItemLocation", "");
+  my $typ = ReadingsVal($name,"contentItemType", "");
+  my $src = ReadingsVal($name,"contentItemSource","");
+  my $acc = ReadingsVal($name,"contentItemSourceAccount","");
+  my $trk = ReadingsVal($name,"track","");
+  my $art = ReadingsVal($name,"artist","");
+  my $sna = ReadingsVal($name,"stationName","");
+
+  #-- return values
+  if( $cur eq "playing" ){
+    #-- STORED_MUSIC: track and artist separately
+    if( $src =~ /STORED.*/ ){
+      $retl = "playing <i>".$trk."</i><br>by <i>".$art."</i>";
+    #-- TUNEIN: track is the radio station, artist consists of artist - title
+    }elsif( $src =~ /TUNEIN.*/ ){
+      my @aaa = split(" - ",$art); 
+      if( int(@aaa) != 2){
+        $retl = "playing <i>".$trk."</i>";
+      }else{
+        $retl = "playing on <i>".$trk."</i>: <i>".$aaa[1]."</i><br>by <i>".$aaa[0];
+      }
+    #-- TV, AUX, HDMI: no artist info
+    }elsif( $src eq "PRODUCT" ){
+      $retl = "playing ".$acc;
+    #-- BLUETOOTH: stationname is BT device
+    }elsif( $src eq "BLUETOOTH"){
+      $retl = "playing <i>".$trk."</i><br>via <i>".$sna."</i>";
+    #-- else
+    }else{
+      $retl = "playing, no idea what";
+    }
+  }elsif( $cur eq "online" ){
+    $retl = $cur;
+  }else{
+    $retl = $cur;
+  }
+  return $retl;
 }
 
 sub BOSEST_searchTrack($$$) {
@@ -1953,6 +2052,14 @@ sub BOSEST_parseAndUpdateNowPlaying($$) {
     $hash->{helper}{sent_off} = 0;
     $hash->{helper}{sent_on} = 0;
     
+    my $pi=BOSEST_playInfo($hash);
+    readingsBulkUpdate($hash,"playinfo1",$pi);
+    $pi =~ s/playing //;
+    $pi =~ s/\(\d\d\d\d\)//;
+    $pi =~ s/<br>/ /;
+    $pi =~ s/\s/\&nbsp;/g;
+    readingsBulkUpdate($hash,"playinfo2",$pi);
+    
     readingsEndUpdate($hash, 1);
     
     return undef;
@@ -2066,6 +2173,7 @@ sub BOSEST_Discovery($) {
         my $res = Net::Bonjour->new('soundtouch');
         $res->discover;
         foreach my $device ($res->entries) {
+            #Log 1,"BOSEST found device at IP ".$device->address;
             $return .= BOSEST_handleDeviceByIp($hash, $device->address);
         }
     };
@@ -2137,6 +2245,10 @@ sub BOSEST_finishedDiscovery($) {
             $deviceHash->{helper}{bluetoothSupport} = 0;
             $deviceHash->{helper}{auxSupport} = 0;
             $deviceHash->{helper}{airplaySupport} = 0;
+            #-- NEW FlatTV
+            $deviceHash->{helper}{productTvSupport} = 0;
+            $deviceHash->{helper}{productHdmi1Support} = 0;
+            #-- end NEW
             $deviceHash->{helper}{supportedSourcesCmds} = "";
             foreach my $source (@params) {
                 if($source eq "BLUETOOTH") {
@@ -2148,7 +2260,16 @@ sub BOSEST_finishedDiscovery($) {
                 } elsif($source eq "AIRPLAY") {
                     $deviceHash->{helper}{airplaySupport} = 1;
                     $deviceHash->{helper}{supportedSourcesCmds} .= "airplay,";
-                }
+                #-- NEW FlatTV
+                } elsif($source eq "PRODUCT") {
+                    #quick hack, we also need sourceAccount value for PRODUCT
+                    if($deviceHash->{helper}{productTvSupport} == 0 && $deviceHash->{helper}{productHdmi1Support} == 0) {
+                        $deviceHash->{helper}{productTvSupport} = 1;
+                        $deviceHash->{helper}{productHdmi1Support} = 1;
+                        $deviceHash->{helper}{supportedSourcesCmds} .= "tv,hdmi1,";
+                    }
+                } 
+                #-- end NEW
             }
             $deviceHash->{helper}{supportedSourcesCmds} = substr($deviceHash->{helper}{supportedSourcesCmds}, 0, length($deviceHash->{helper}{supportedSourcesCmds})-1);
         } elsif($command eq "capabilities") {
@@ -2261,6 +2382,7 @@ sub BOSEST_webSocketFinished($$) {
     $hash->{helper}{wsconnected} -= 1;
     
     #set presence & state to offline due to connection drop
+    ### WARUM WAREN begin/end Auskommentiert??
     readingsBeginUpdate($hash);
     BOSEST_readingsSingleUpdateIfChanged($hash, "IP", "unknown", 1);
     BOSEST_readingsSingleUpdateIfChanged($hash, "presence", "offline", 1);
@@ -2565,25 +2687,28 @@ sub BOSEST_readingsSingleUpdateIfChanged {
         <li><code><b>playpause</b></code> &nbsp;&nbsp;-&nbsp;&nbsp; toggle play/pause</li>
         <li><code><b>stop</b></code> &nbsp;&nbsp;-&nbsp;&nbsp; stop playback</li><li><code><b>nextTrack</b></code> &nbsp;&nbsp;-&nbsp;&nbsp; play next track</li>
         <li><code><b>prevTrack</b></code> &nbsp;&nbsp;-&nbsp;&nbsp; play previous track</li>
-        <li><code><b>playTrack </b> name|location|source[|sourceAccount]</code> &nbsp;&nbsp;-&nbsp;&nbsp; searches per DNLA for the track title and plays it <br>
-      	     <font size=-1>additional information:
-		         <ol> 
-		        		<li>You can search for trackTitle, trackAlbum, trackArtist (<a target= "_blank" href="https://forum.fhem.de/index.php?topic=46838.msg594029#msg594029">german FHEM forum post</a>) </li>
-		        	   <li>You can test it in the SoundTouch APP: Use the search in the APP to see if a playlist is found and played. It yes it will work with playTrack too. (<a target= "_blank" href="https://forum.fhem.de/index.php/topic,46838.msg594693.html#msg594693">german FHEM forum post</a>) </li>
-		        </ol>
-		        </font></li>
+        <li><code><b>playTrack </b> name|location|source[|sourceAccount]</code> &nbsp;&nbsp;-&nbsp;&nbsp; searches per DNLA for the track title/album/artist and plays it <br>
+        </li>
+		<li><code><b>origin </b> originString</code> &nbsp;&nbsp;-&nbsp;&nbsp; only if not tv, bluetooth or aux: calls an external function defined in the <i>originHandler</i> attribute with parameters
+		  <i>$DEVICE,$ORIGIN</i> replaced by the name of the BOSEST device and the value of the origin argument. <br>
+		        This allows to define your own function for selecting music to play, like e.g. playlists or certain radio stations. Also, by using the widgetOverride attribute, a 
+		        dropdown list may be shown for this command. 
+		        </li>
         <li><code><b>mute</b> on|off|toggle</code> &nbsp;&nbsp;-&nbsp;&nbsp; control volume mute</li>
         <li><code><b>shuffle</b> on|off</code> &nbsp;&nbsp;-&nbsp;&nbsp; control shuffle mode</li>
         <li><code><b>repeat</b> all|one|off</code> &nbsp;&nbsp;-&nbsp;&nbsp; control repeat mode</li>
         <li><code><b>bass</b> 0...10</code> &nbsp;&nbsp;-&nbsp;&nbsp; set the bass level</li>
         <li><code><b>recent</b> 0...15</code> &nbsp;&nbsp;-&nbsp;&nbsp; set number of names in the recent list in readings</li>
-        <li><code><b>source</b> bluetooth,bt-discover,aux mode, airplay</code> &nbsp;&nbsp;-&nbsp;&nbsp; select a local source</li><br>
+        <li><code><b>source</b> bluetooth,bt-discover,aux mode, airplay,tv,hdmi1</code> &nbsp;&nbsp;-&nbsp;&nbsp; select a local source</li><br>
         <li><code><b>addDLNAServer</b> Name1 [Name2] [Namex]</code> &nbsp;&nbsp;-&nbsp;&nbsp; add DLNA servers Name1 (and Name2 to Namex) to the BOSE library</li>
         <li><code><b>removeDLNAServer</b> Name1 [Name2] [Namex]</code> &nbsp;&nbsp;-&nbsp;&nbsp; remove DLNA servers Name1 (and Name2 to Namex) to the BOSE library</li>
       </ul><br>
       Example: <code>set BOSE_1234567890AB volume 25</code>&nbsp;&nbsp;Set volume on device with the name BOSE_1234567890AB <br><br><br>
        	
-      <ul><u>Timer commands:</u>
+      <ul><u>Timer and related commands:</u>
+        <li><code><b>saveState</b></code> &nbsp;&nbsp;-&nbsp;&nbsp; store the current play state in memory</li>
+        <li><code><b>restoreState</b> [x]</code>&nbsp;&nbsp;-&nbsp;&nbsp; restore a stored play state from memory, optional after x seconds</li>
+        <li><code><b>restoreVolAndOff</b> [x]</code>&nbsp;&nbsp;-&nbsp;&nbsp; restore a stored volume value memory and switch off box, optionally after x seconds</li>
         <li><code><b>on-for-timer</b> 1...x</code> &nbsp;&nbsp;-&nbsp;&nbsp; power on the device for x seconds</li>
         <li><code><b>off-for-timer</b> 1...x</code> &nbsp;&nbsp;-&nbsp;&nbsp; turn the device off and power on again after x seconds</li>
         <li><code><b>on-till</b> hh:mm:ss</code> &nbsp;&nbsp;-&nbsp;&nbsp; power on the device until defined time</li>
@@ -2635,6 +2760,7 @@ sub BOSEST_readingsSingleUpdateIfChanged {
       <li><code><b>staticIPs</b> IP-Address [,IP-Address]</code>&nbsp;&nbsp;-&nbsp;&nbsp; Manually define the used IP address(es) (comma separated) of your BOSE devices. Should be used only, if BOSEST device detection doesn't work in your network (e.g. several subnets on server, subnet not directly connected, ...) <br>Example: <code>attr bosesystem staticIPs 192.168.1.52,192.168.1.53</code></li>
       <li><code><b>speakChannel</b> channel(s)</code>&nbsp;&nbsp;-&nbsp;&nbsp; speaks channel/present name bevor starting a playback, useful for SoundTouch without display (comma separated or range: e.g.&nbsp;<code>2,3,5,6 </code> or <code>1-6</code> ). TTS must be installed.</li>
       <li><code><b>auto-zone</b> on|off</code>  &nbsp;&nbsp;-&nbsp;&nbsp; automatic start  multiroom zone play, if speakers are playing the same, according to "contentItemLocation"; (default: off)</li>
+      <li><code><b>originHandler</b> function($DEVICE,$ORIGIN,...)</code> &nbsp;&nbsp;-&nbsp;&nbsp; name of an external perl function for selection of music.</li>
       <li><code><b>ttsDirectory</b> "directory"</code> &nbsp;&nbsp;-&nbsp;&nbsp; set DLNA TTS directory. FHEM user needs permissions to write to that directory. </li>
       <li><code><b>ttsLanguage </b> en|de|xx</code> &nbsp;&nbsp;-&nbsp;&nbsp; set default TTS language (default: en)</li>
       <li><code><b>ttsSpeakOnError</b> 0|1</code> &nbsp;&nbsp;-&nbsp;&nbsp; 0=disable to speak "not available" text</li>
@@ -2691,13 +2817,14 @@ sub BOSEST_readingsSingleUpdateIfChanged {
         <li><code><b>playpause</b></code> &nbsp;&nbsp;-&nbsp;&nbsp; Wechselt zw. play und pause</li>
         <li><code><b>stop</b></code> &nbsp;&nbsp;-&nbsp;&nbsp; Stoppt die Wiedergabe</li><li><code><b>nextTrack</b></code> &nbsp;&nbsp;-&nbsp;&nbsp; N&auml;chsten Titel spielen</li>
         <li><code><b>prevTrack</b></code> &nbsp;&nbsp;-&nbsp;&nbsp; Vorherigen Titel spielen</li>
-      	<li><code><b>playTrack </b> name|location|source[|sourceAccount]</code> &nbsp;&nbsp;-&nbsp;&nbsp; Sucht per DNLA nach dem Titel und spielt ihn ab <br>
-      		<font size=-1>Weitere Informationen:
-      		<ol> 
-      			<li>"Es ist immer nur eine Suche und die ist nach trackTitle, trackAlbum, trackArtist m&ouml;glich, so wie in der SoundTouch App" (<a target= "_blank" href="https://forum.fhem.de/index.php?topic=46838.msg594029#msg594029">FHEM Forum Beitrag</a>) </li>
-      			<li>"Einfach in der SoundTouch APP auf die Suche klicken und schauen, ob Playlists gefunden und abgespielt werden k&ouml;nnen." (<a target= "_blank" href="https://forum.fhem.de/index.php/topic,46838.msg594693.html#msg594693">FHEM Forum Beitrag</a>) </li>
-      		</ol>
-      		</font></li>
+        <li><code><b>playTrack </b> name|location|source[|sourceAccount]</code> &nbsp;&nbsp;-&nbsp;&nbsp; Sucht per DNLA nach dem Titel/Album/Artist und spielt ihn ab
+      		</li>
+        <li><code><b>origin </b> originString</code> &nbsp;&nbsp;-&nbsp;&nbsp; nur wenn nicht  tv, bluetooth oder aux:  
+          ruft eine externe Fuktion, die im Attribut <i>originHandler</i> definiert wird. Dabei werden die Funktionsparameter
+		  <i>$DEVICE,$ORIGIN</i> durch den Namen des BOSEST-Devices und das Argument des origin-Befehls ersetzt <br>
+		        Dies erlaubt die Definition einer eigenen Funktion zur Musikauswahl, z.B. von Playlists oder bestimmter Radiostationen.
+		        Durch Verwendung des widgetOverride-Attributes kann ferner eine Dropdown-Liste für diesen Abspielbefehl definiert werden.
+		        </li>
         <li><code><b>mute</b> on|off|toggle</code> &nbsp;&nbsp;-&nbsp;&nbsp; Stummschaltung</li>
         <li><code><b>shuffle</b> on|off</code> &nbsp;&nbsp;-&nbsp;&nbsp; Zufallswiedergabe</li>
         <li><code><b>repeat</b> all|one|off</code> &nbsp;&nbsp;-&nbsp;&nbsp; Wiederholung</li>
@@ -2709,7 +2836,10 @@ sub BOSEST_readingsSingleUpdateIfChanged {
        </ul><br>
        Beispiel: <code>set BOSE_1234567890AB volume 25</code>&nbsp;&nbsp;Setzt die Lautst&auml;rke des Lautsprechers BOSE_1234567890AB auf 25.<br><br><br>
        	
-       <ul><u>Zeiten:</u>
+       <ul><u>Zeiten und verwandte Befehle:</u>
+        <li><code><b>saveState</b></code> &nbsp;&nbsp;-&nbsp;&nbsp; speichere den gegenwärtigen Abspielzustand</li>
+        <li><code><b>restoreState</b> [x]</code>&nbsp;&nbsp;-&nbsp;&nbsp; stelle den gespeicherten Abspielzustand wieder her, optional erst nach x Sekunden</li>
+        <li><code><b>restoreVolAndOff</b> [x]</code>&nbsp;&nbsp;-&nbsp;&nbsp; stelle den gespeicherten Lautstärkewert wieder her und schalte die Box aus, optional erst nach x Sekunden</li>
         <li><code><b>on-for-timer</b> 1...x</code> &nbsp;&nbsp;-&nbsp;&nbsp; Schaltet den Lautsprecher f&uuml;r x Sekunden ein</li>
         <li><code><b>off-for-timer</b> 1...x</code> &nbsp;&nbsp;-&nbsp;&nbsp; Schaltet den Lautsprecher f&uuml;r x Sekunden aus</li>
         <li><code><b>on-till</b> hh:mm:ss</code> &nbsp;&nbsp;-&nbsp;&nbsp; Schaltet den Lautsprecher bis zur angegebenen Zeit ein</li>
@@ -2728,7 +2858,7 @@ sub BOSEST_readingsSingleUpdateIfChanged {
       </ul><br>
       Beispiel 1: <code>set BOSE_1234567890AB playEverywhere</code>&nbsp;&nbsp;Startet die &Uuml;berall-Wiedergabe (Mit dem Lautsprecher BOSE_1234567890AB als Master-Lautsprecher). <br><br>
       Beispiel 2: <code>set BOSE_1234567890AB createZone AB1234567890,12AB34567890</code>&nbsp;&nbsp;Definiert BOSE_1234567890AB als Master-Lautsprecher und f&uuml;gt BOSE_AB1234567890 und BOSE_12AB34567890 der Wiedergabe-Zone hinzu<br><br>
-      <b>Hinweis:</b> Dr&uuml;cken Sie 2x  ein Present (innerhalb einer Sekunde) am Lautsprecher oder auf der Fernbedienung, wird "&Uuml;berall Wiedergeben" ein oder ausgeschaltet.<br><br><br>
+      <b>Hinweis:</b> Dr&uuml;cken Sie 2x ein Preset (innerhalb einer Sekunde) am Lautsprecher oder auf der Fernbedienung, wird "&Uuml;berall Wiedergeben" ein oder ausgeschaltet.<br><br><br>
       
       <ul><u>Uhr Anzeige (nur f&uuml;r ST20/30):</u>       
       	<li><code><b>clock</b> enable/disable</code> &nbsp;&nbsp;-&nbsp;&nbsp; Schaltet die Uhrenanzeige im Standby um</li>
@@ -2758,6 +2888,7 @@ sub BOSEST_readingsSingleUpdateIfChanged {
       		<li><code><b>staticIPs</b> IP-Address [,IP-Address]</code>&nbsp;&nbsp;-&nbsp;&nbsp; Manuelle Angabe der IP Adresse(n). Sollte nur verwendet werden, wenn die automatiche Erkennung nicht funktioniert. (z.B. bei mehreren Sub-Netzwerken oder wenn Teile des Netzwerks manuell verbunden werden, ...) <br>Beispiel: <code>attr bosesystem staticIPs 192.168.1.52,192.168.1.53</code></li>
       		<li><code><b>speakChannel</b> channel(s) </code>&nbsp;&nbsp;-&nbsp;&nbsp; Ansage des aktuellen Present vor der Wiedergabe, sinnvoll f&uuml;r SoundTouch Lautsprecher ohne Display (Angabe komma-separiert oder als Bereich: z.B.&nbsp;<code>2,3,5,6 </code> oder <code>1-6</code> ). TTS muss eingerichtet sein.</li>
       		<li><code><b>auto-zone</b> on|off</code>  &nbsp;&nbsp;-&nbsp;&nbsp; "&Uuml;berall Wiedergabe" automatisch starten, wenn Lautsprecher das gleiche wiedergeben ("contentItemLocation" ist identisch); (Standardwert: off)</li>
+              <li><code><b>originHandler</b> function($DEVICE,$ORIGIN,...)</code> &nbsp;&nbsp;-&nbsp;&nbsp; Name einer externen Perl-Funktion zur Musikauswahl</li>
       		<li><code><b>ttsDirectory</b> "directory"</code> &nbsp;&nbsp;-&nbsp;&nbsp; Angabe des DLNA TTS Verzeichnisses. Der FHEM user muss Schreibrechte in diesem Verzeichnis haben.</li>
        		<li><code><b>ttsLanguage </b> en|de|xx</code> &nbsp;&nbsp;-&nbsp;&nbsp; Standardsprache f&uuml;r TTS setzen (default: en)</li>
        		<li><code><b>ttsSpeakOnError</b> 0|1</code> &nbsp;&nbsp;-&nbsp;&nbsp; 0= Ansage "not available" unterdr&uuml;cken</li>
