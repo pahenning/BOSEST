@@ -7,14 +7,16 @@
 # FHEM module to communicate with BOSE SoundTouch system
 # API as defined in BOSE SoundTouchAPI_WebServices_v1.0.1.pdf
 #
-# Version: 3.0beta
+# Version: 3.0beta2
 #
 #############################################################
 #
-# v3.0beta - 2026
+# v3.0beta2 - 2026
 # - FEATURE: set ... saveState restoreState restoreVolAndOff (betateilchen)
 # - FEATURE: add PRODUCT TV and HDMI_1 to source for ST300 (FlatTV)
 # - FEATURE: set ... origin <string> added (phenning)
+# - FEATURE: playinfo1 and playinfo2 added as readings
+# - BUG:     bassCapabilities result in set ... bass command
 #
 # v2.2.1 - 20181127
 # - CHANGE:  add staticIPs documentation in commandref
@@ -270,7 +272,7 @@ my $BOSEST_GOOGLE_NOT_AVAILABLE_TEXT = "Hello, I'm sorry, but Google Translate i
 my $BOSEST_GOOGLE_NOT_AVAILABLE_LANG = "en";
 my $BOSEST_READ_CMDREF_TEXT = "Hello, I'm sorry, but you need to install new libraries, please read command reference.";
 my $BOSEST_READ_CMDREF_LANG = "en";
-my $BOSEST_VERSION = "3.0beta";
+my $BOSEST_VERSION = "3.0beta2";
 
 sub BOSEST_Initialize($) {
     my ($hash) = @_;
@@ -2054,7 +2056,7 @@ sub BOSEST_parseAndUpdateNowPlaying($$) {
     
     my $pi=BOSEST_playInfo($hash);
     readingsBulkUpdate($hash,"playinfo1",$pi);
-    $pi =~ s/playing //;
+    $pi =~ s/playing( on)? //;
     $pi =~ s/\(\d\d\d\d\)//;
     $pi =~ s/<br>/ /;
     $pi =~ s/\s/\&nbsp;/g;
@@ -2107,14 +2109,19 @@ sub BOSEST_handleDeviceByIp {
             $return .= ",false";
         }
     
-        #set supported bass capabilities
-        my $bassCapabilities = BOSEST_HTTPGET($hash, $ip, "/bassCapabilities");
-        $return .= "|bassCapabilities|$info->{deviceID}";
-        if($bassCapabilities->{bassCapabilities}) {
-            my $bassCap = $bassCapabilities->{bassCapabilities};
-            $return .= ",".$bassCap->{bassAvailable}.",".$bassCap->{bassMin}.",".
-                       $bassCap->{bassMax}.",".$bassCap->{bassDefault};
-        }
+    }
+    
+    #set supported bass capabilities
+    my $bassCapabilities = BOSEST_HTTPGET($hash, $ip, "/bassCapabilities");
+    $return .= "|bassCapabilities|$info->{deviceID}";
+    if($bassCapabilities->{bassCapabilities}) {
+      my $bassCap = $bassCapabilities->{bassCapabilities};
+      if( $bassCap->{bassAvailable} eq "true"){
+        $return .= ",".$bassCap->{bassAvailable}.",".$bassCap->{bassMin}.",".
+          $bassCap->{bassMax}.",".$bassCap->{bassDefault};
+      }else{
+        $return .= ",".$bassCap->{bassAvailable}.",,,";
+      }
     }
 
     #TODO create own function (add own DLNA server)
