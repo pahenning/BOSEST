@@ -7,3 +7,4 @@ NEW features:
  - FEATURE: set ... origin <string> added (phenning)
  - FEATURE: playinfo1 and playinfo2 readings added (phenning)
  - BUG:     bass slider appears when capabilties present
+ - FEATURE: bass slider and treble slider for ST300 (phenning)
