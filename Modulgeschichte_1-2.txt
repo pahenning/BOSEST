@@ -1,0 +1,222 @@
+# BOSEST.pm (c) by Dominik Karall, 2016-2018
+# dominik karall at gmail dot com
+#
+# v2.2.1 - 20181127
+# - CHANGE:  add staticIPs documentation in commandref
+#
+# v2.2.0 - 20171211
+# - FEATURE: support new Audio Notification API for TTS (no more minidlna)
+# - BUGFIX:  fix warning about uninitialized value (thx@betateilchen!)
+#
+# v2.1.1 - 20170812
+# - CHANGE:  changed reading name type to model
+#
+# v2.1.0 - 20170129
+# - NEW REQUIREMENT: TTS: sox, libsox-fmt-mp3 (only required for TTS)
+# - FEATURE: TTS: add 1 second silence before TTS message for speak to
+#            prevent low volume on first words
+# - FEATURE: TTS: support "unlimited" characters in TTS speak.
+#            Text is split in sentences which are afterwards
+#            merged with sox. Same sentences are downloaded
+#            only once a month to reduce requests to Google.
+# - FEATURE: TTS: remove ttsDlnaServer attribut, it will be automatically discovered
+# - BUGFIX:  TTS: support pause/stop after speak if previous state was paused/stopped
+# - BUGFIX:  TTS: fix resume after speak when spotify running
+# - BUGFIX:  TTS: fix speakChannel for spotify presets
+# - BUGFIX:  TTS: use pause on TTS instead of stop to allow proper resume
+# - BUGFIX:  TTS: improved check after TTS play to restore previous state
+# - BUGFIX:  TTS: if state was invalid before TTS it will be set to standby
+# - BUGFIX:  fix save spotify to channel_7-20
+# - BUGFIX:  fix list of arguments
+# - FEATURE: add $readingFnAttributes
+# - FEATURE: add playPause toggle command
+#
+# v2.0.1 - 20161203
+# - FEATURE: support shuffle/repeat (thx@rockyou)
+# - BUGFIX:  support special characters for TTS (thx@hschuett)
+# - BUGFIX:  module didn't work if you had only 1 preset active
+# - CHANGE:  add link to commandref on how to setup TTS
+# - BUGFIX:  remove "unknown event" log entry for ping/pong messages
+#
+# v2.0.0 - 20160718
+# - CHANGE: first official release within fhem repository
+#
+# v1.5.7 - 20160623
+# - BUGFIX: fix off command if zone-play is active
+# - BUGFIX: fix auto-zone if zone-play is already active
+# - BUGFIX: do not create auto-zone if both players play nothing
+# - BUGFIX: update most readings only on change (reduces number of events)
+# - BUGFIX: fix autoAddDLNAServers functionality in main device
+#
+# v1.5.6 - 20160611
+# - FEATURE: auto-zone, start zone-play if speakers are playing the same (contentItemLocation)
+#             attr <name> autoZone on (default: off)
+# - BUGFIX: set zone only from master device as slave devices might not always report the truth (known bug at BOSE)
+# - CHANGE: set zonemember_X to UDN instead of player name
+# - CHANGE: delete TTS files after 30 days
+# - CHANGE: reduce number of http calls after each discovery process
+# - CHANGE: reduce number of http calls for key presses
+#
+# v1.5.5 - 20160510
+# - BUGFIX: fix unitiliazed value in handleDeviceByIp
+#
+# v1.5.4 - 20160509
+# - FEATURE: restore volume when speaker goes online
+#             allows to power off the box completely without loosing
+#             previous volume settings
+# - BUGFIX: fix possible unitialized value
+# - BUGFIX: fix next which should be return
+# - BUGFIX: sometimes double-tap feature wasn't working due to BOSE not
+#           updating zones for slave speakers
+#
+# v1.5.3 - 20160425
+# - FEATURE: support static IPs (should only be used if device can't be discovered)
+#             attr bose_system staticIPs 192.168.1.52,192.168.1.53
+# - FEATURE: support speak channel name (useful for SoundTouch w/o display)
+#             attr <name> speakChannel 1-6
+#             attr <name> speakChannel 2,3,5,6
+# - BUGFIX: retry websocket setup every 5s if it fails
+# - BUGFIX: update supportClockDisplay reading only on reconnect
+# - CHANGE: remove user attr from main device
+#
+# v1.5.2 - 20160403
+#  - FEATURE: support clock display (SoundTouch 20/30)
+#             set <name> clock enable/disable
+#
+# v1.5.1 - 20160330
+#  - CHANGE: updated documentation (again many thx to Miami!)
+#  - FEATURE: support triple-tap (currently no function implemented: any ideas? :))
+#  - CHANGE: change back channel even after speakOff
+#  - BUGFIX: unitialized value fixed
+#
+# v1.5.0 - 20160306
+#  - FEATURE: support SetExtensions (on-for-timer,...)
+#  - FEATURE: support TTS (TextToSpeach) via Google Translate
+#             set <name> speak "This is a test message"
+#  - FEATURE: support volume control for TTS
+#             set <name> speak "This message has different volume" 30
+#  - FEATURE: support different languages for TTS
+#             set <name> speak "Das ist ein deutscher Test" de
+#             set <name> speak "Das ist ein deutscher Test" 30 de
+#  - FEATURE: support off (instead of resume) after TTS messages (restores only volume settings)
+#             set <name> speakOff "Music is going to switch off now. Good night." 30 en
+#  - FEATURE: speak "not available" text on Google Captcha
+#             can be disabled by ttsSpeakOnError = 0
+#  - FEATURE: set default TTS language via ttsLanguage attribute
+#  - FEATURE: automatically add DLNA server running on the same
+#             server as FHEM to the BOSE library
+#  - FEATURE: automatically add all DLNA servers to BOSE library
+#             requires autoAddDLNAServers = 1 attribute for "main" (not players!)
+#  - FEATURE: reuse cached TTS files for 30 days
+#  - FEATURE: set DLNA TTS directory via ttsDirectory attribute
+#  - FEATURE: set DLNA TTS server via ttsDLNAServer attribute
+#             only needed if the DLNA server is not the FHEM server
+#  - FEATURE: support ttsVolume for speak
+#             ttsVolume = 20 (set volume 20 for speak)
+#             ttsVolume = +20 (increase volume by 20 from current level)
+#  - FEATURE: add html documentation (provided by Miami)
+#  - FEATURE: support relative volume settings with +/-
+#             set <name> volume +3
+#             set <name> speak "This is a louder message" +10
+#  - FEATURE: new reading "connectedDLNAServers" (blanks are replaced by "-")
+#  - FEATURE: support add/remove DLNA servers to the BOSE library
+#             set <name> addDLNAServer RPi
+#             set <name> removeDLNAServer RPi
+#  - FEATURE: add readings for channel_07-20
+#  - FEATURE: support saveChannel to save current channel to channel_07-20
+#  - FEATURE: support bass settings only if available (/bassCapabilities)
+#  - FEATURE: support bluetooth only if available (/sources)
+#  - FEATURE: support switch source to airplay (untested)
+#  - BUGFIX: update zone on Player discovery
+#  - BUGFIX: fixed some uninitialized variables
+#  - CHANGE: limit recent_X readings to 15 max
+#
+# v1.0.0 - 20160219
+#  - FEATURE: support multi-room (playEverywhere, stopPlayEverywhere)
+#  - FEATURE: show current zone members in readings
+#  - FEATURE: support createZone <deviceID1>,<deviceID2>,...
+#  - FEATURE: support addToZone <deviceID1>,<deviceID2>,...
+#  - FEATURE: support removeFromZone <deviceID1>,<deviceID2>,...
+#  - FEATURE: add "double-tap" multi-room feature
+#             double-tap (<1s) a hardware preset button to
+#             enable or disable the multi-room feature
+#  - FEATURE: support bass settings
+#  - FEATURE: support infoUpdated (e.g. deviceName change)
+#  - FEATURE: support mute on/off/toggle
+#  - FEATURE: support recent channel list
+#             set name recent X
+#             names for recent list entries are shown in readings
+#  - FEATURE: support channel_07-20 by attribute
+#             format:name|location|source|sourceAccount or
+#                    name|location|source| if no sourceAccount
+#  - FEATURE: support bluetooth/bt-discover/aux mode
+#  - FEATURE: support ignoreDeviceIDs for main define
+#             format:B23C23FF,A2EC81EF
+#  - CHANGE: reading channel_X => channel_0X (e.g. channel_02)
+#
+# v0.9.7 - 20160214
+#  - FEATURE: print module version on startup of main module
+#  - FEATURE: support device rename (e.g. BOSE_... => wz_BOSE)
+#  - FEATURE: show preset itemNames in channel_X reading
+#  - FEATURE: automatically update preset readings on change
+#  - FEATURE: add description reading (could be very long)
+#  - CHANGE: change log level for not implemented events to 4
+#  - CHANGE: use only one processXml function for websocket and http
+#  - BUGFIX: fix set off/on more than once within 1 second
+#  - BUGFIX: fix warnings during setup process
+#  - BUGFIX: support umlauts in all readings
+#  - BUGFIX: handle XMLin errors with eval
+#  - BUGFIX: handle "set" when speaker wasn't found yet
+#
+# v0.9.6 - 20160210
+#  - FEATURE: support prev/next track
+#
+# v0.9.5 - 20160210
+#  - FEATURE: update channel based on websocket events
+#  - BUGFIX: specify minimum libmojolicious-perl version
+#  - BUGFIX: reconnect websocket if handshake fails
+#  - BUGFIX: presence reading fixed
+#  - CHANGE: websocket request timeout changed to 10s (prev. 5s)
+#  - CHANGE: clockDisplayUpdated message handled now
+#
+# v0.9.4 - 20160206
+#  - CHANGE: completely drop ithreads (reduces memory usage)
+#  - CHANGE: search for new devices every 60s (BlockingCall)
+#  - CHANGE: check presence status based on websocket connection
+#  - BUGFIX: removed arguments and readings for main BOSEST
+#  - FEATURE: read volume on startup
+#
+# v0.9.3 - 20160125
+#  - BUGFIX: fix "EV does not work with ithreads."
+#
+# v0.9.2 - 20160123
+#  - BUGFIX: fix memory leak
+#  - BUGFIX: use select instead of usleep
+#
+# v0.9.1 - 20160122
+#  - BUGFIX: bugfix for on/off support
+#
+# v0.9 - 20160121
+#  - autodiscover BOSE SoundTouch players
+#  - add alias for newly created devices
+#  - update IP if the player IP changes
+#  - automatically re-connect websocket
+#  - support UTF-8 names with umlauts
+#  - reconnect websocket when connection closed
+#  - add firmware version & IP readings
+#  - automatically update /info on IP update
+#  - state: offline,playing,stopped,paused,online (online means standby)
+#  - support on/off commands based on current state
+#  - support more readings for now_playing
+#
+# v0.2 - 20160110
+#  - support stop/play/pause/power
+#  - change preset to channel according to DevGuidelinesAV
+#  - read /info on startup
+#  - connect to websocket to receive speaker events
+#
+# v0.1 - 20160105
+#  - define BOSE Soundtouch based on fixed IP
+#  - change volume via /volume
+#  - change preset via /key
+#
