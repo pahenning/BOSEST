@@ -2,13 +2,13 @@
 #
 # BOSEST.pm 
 #
-# Version 1-2 by Dominik Karall, 2016-2017
 # Version 3.x by others
+# Version 1-2 by Dominik Karall, 2016-2017
 #
 # FHEM module to communicate with BOSE SoundTouch system
 #  $Id: 98_BOSEST.pm 30000 2026-02-01 18:00:00Z phenning $
 #
-# Version: 3.0beta4
+# Version: 3.0beta5
 #
 #############################################################
 #
@@ -32,7 +32,7 @@
 # - set title/album/artist for TTS files (--comment "Title=Title..")
 # - check if Mojolicious should be used for HTTPGET/HTTPPOST
 # - ramp up/down volume support in SetExtensions
-#  http://192.168.0.104:8090/audiodspcontrols <audiodspcontrols audiomode="AUDIO_MODE_DIALOG" videosyncaudiodelay="0" supportedaudiomodes="AUDIO_MODE_NORMAL|AUDIO_MODE_DIALOG"/>
+# - dialog mode in save/restore state
 #############################################################
 
 BEGIN {
@@ -63,7 +63,7 @@ my $BOSEST_GOOGLE_NOT_AVAILABLE_TEXT = "Hello, I'm sorry, but Google Translate i
 my $BOSEST_GOOGLE_NOT_AVAILABLE_LANG = "en";
 my $BOSEST_READ_CMDREF_TEXT = "Hello, I'm sorry, but you need to install new libraries, please read command reference.";
 my $BOSEST_READ_CMDREF_LANG = "en";
-my $BOSEST_VERSION = "3.0beta4";
+my $BOSEST_VERSION = "3.0beta5";
 
 #############################################################################
 #
@@ -724,10 +724,10 @@ sub BOSEST_setBassTreble($$$) {
     my ($hash, $value,$type) = @_;
     my ($bass,$treble,$value2,$postXml);
     
-    if( $hash->{helper}{bassAvailable} == 1){
+    if( $hash->{helper}{bassAvailable} == 1 && $type eq "b"){
       #-- readings 0 .. 10
-       if( !defined($value) ||  $value > 10 || $value < 0 ){
-        Log 1,$hash->{NAME}." invalid argument for bass, must be 0 .. 10";
+       if( !defined($value) ||  $value > 10 || $value < 1 ){
+        Log 1,$hash->{NAME}." invalid argument for bass, must be 1 .. 10";
         $value = 0;
       }
       $bass = $value - 10;
@@ -1034,9 +1034,10 @@ sub BOSEST_speak($$$$$) {
 
 sub BOSEST_saveCurrentState($) {
     my ($hash) = @_;
-    
+
     $hash->{helper}{savedState}{volume} = ReadingsVal($hash->{NAME}, "volume", 20);
     $hash->{helper}{savedState}{source} = ReadingsVal($hash->{NAME}, "source", "");
+    $hash->{helper}{savedState}{dialog} = ReadingsVal($hash->{NAME}, "dialog", "");
     $hash->{helper}{savedState}{bass} = ReadingsVal($hash->{NAME}, "bass", "");
     $hash->{helper}{savedState}{treble} = ReadingsVal($hash->{NAME}, "treble", "");
     $hash->{helper}{savedState}{playStatus} = ReadingsVal($hash->{NAME}, "playStatus", "STOP_STATE");
@@ -1055,9 +1056,10 @@ sub BOSEST_restoreSavedState($) {
     my ($hash) = @_;
     
     BOSEST_setVolume($hash, $hash->{helper}{savedState}{volume});
+    BOSEST_setDialog($hash, $hash->{helper}{savedState}{dialog});
     BOSEST_setBassTreble($hash, $hash->{helper}{savedState}{bass},"b");
     BOSEST_setBassTreble($hash, $hash->{helper}{savedState}{treble},"t");
-    
+
     #-- switch off when source was off
     if($hash->{helper}{savedState}{source} eq "STANDBY" or $hash->{helper}{savedState}{source} eq "INVALID_SOURCE") {
       BOSEST_off($hash);
@@ -1986,9 +1988,10 @@ sub BOSEST_parseAndUpdateRecents($$) {
 
 sub BOSEST_parseAndUpdateVolume($$) {
     my ($hash, $volume) = @_;
+    #-- no need to go via BOSE_XMLUpdate
     readingsBeginUpdate($hash);
-    BOSEST_XMLUpdate($hash, "volume", $volume->{actualvolume});
-    BOSEST_XMLUpdate($hash, "mute", $volume->{muteenabled});
+    readingsBulkUpdate($hash, "volume", $volume->{actualvolume});
+    readingsBulkUpdate($hash, "mute", $volume->{muteenabled});
     readingsEndUpdate($hash, 1);
     return undef;
 }
@@ -2001,12 +2004,13 @@ sub BOSEST_parseAndUpdateBassTreble($$) {
     readingsBeginUpdate($hash);
     if($hash->{helper}{bassAvailable} == 1){
       my $currBass = $basstreble->{actualbass} + 10;
-      BOSEST_XMLUpdate($hash, "bass", $currBass);
+      readingsBulkUpdate($hash, "bass", $currBass);
     }elsif($hash->{helper}{bassTrebleAvailable} == 1){
       my $currBass = $basstreble->{bass}->{value}/25;
       my $currTreble = $basstreble->{treble}->{value}/25;
-      BOSEST_XMLUpdate($hash, "bass", $currBass);
-      BOSEST_XMLUpdate($hash, "treble", $currTreble);
+      #Log 1,"##########> Updating bass with $currBass and treble with $currTreble";
+      readingsBulkUpdate($hash, "bass", $currBass);
+      readingsBulkUpdate($hash, "treble", $currTreble);
     }
     readingsEndUpdate($hash, 1);
     
@@ -2018,10 +2022,7 @@ sub BOSEST_parseAndUpdateBassTreble($$) {
 sub BOSEST_parseAndUpdateDialog($$) {
     my ($hash, $dialog) = @_;
     #Log 1,"=====> parseAndUpdateDialog with ".Dumper($dialog);
-    readingsBeginUpdate($hash);
-    BOSEST_XMLUpdate($hash, "dialog", ($dialog->{audiomode} eq "AUDIO_MODE_DIALOG")?"on":"off");
-    readingsEndUpdate($hash, 1);
-    
+    readingsSingleUpdate($hash, "dialog", ($dialog->{audiomode} eq "AUDIO_MODE_DIALOG")?"on":"off",1);
     return undef;
 }
 
@@ -2878,7 +2879,9 @@ sub BOSEST_readingsSingleUpdateIfChanged {
         <li><code><b>mute</b> on|off|toggle</code> &nbsp;&nbsp;-&nbsp;&nbsp; control volume mute</li>
         <li><code><b>shuffle</b> on|off</code> &nbsp;&nbsp;-&nbsp;&nbsp; control shuffle mode</li>
         <li><code><b>repeat</b> all|one|off</code> &nbsp;&nbsp;-&nbsp;&nbsp; control repeat mode</li>
-        <li><code><b>bass</b> 0...10</code> &nbsp;&nbsp;-&nbsp;&nbsp; set the bass level</li>
+        <li><code><b>bass</b> 0...10</code> resp. <code><b>bass</b> -4..4</code> on ST300&nbsp;&nbsp;-&nbsp;&nbsp; set the bass level</li>
+        <li>only available on ST300 <code><b>treble</b> -4 .. 4</code> &nbsp;&nbsp;-&nbsp;&nbsp;set the treble level</li>
+        <li>only available on ST300 <code><b>dialog</b> on|off</code>  &nbsp;&nbsp;-&nbsp;&nbsp; setting for speech output</li>
         <li><code><b>recent</b> 0...15</code> &nbsp;&nbsp;-&nbsp;&nbsp; set number of names in the recent list in readings</li>
         <li><code><b>source</b> bluetooth,bt-discover,aux mode, airplay,tv,hdmi1</code> &nbsp;&nbsp;-&nbsp;&nbsp; select a local source</li><br>
         <li><code><b>addDLNAServer</b> Name1 [Name2] [Namex]</code> &nbsp;&nbsp;-&nbsp;&nbsp; add DLNA servers Name1 (and Name2 to Namex) to the BOSE library</li>
@@ -3009,7 +3012,9 @@ sub BOSEST_readingsSingleUpdateIfChanged {
         <li><code><b>mute</b> on|off|toggle</code> &nbsp;&nbsp;-&nbsp;&nbsp; Stummschaltung</li>
         <li><code><b>shuffle</b> on|off</code> &nbsp;&nbsp;-&nbsp;&nbsp; Zufallswiedergabe</li>
         <li><code><b>repeat</b> all|one|off</code> &nbsp;&nbsp;-&nbsp;&nbsp; Wiederholung</li>
-        <li><code><b>bass</b> 0...10</code> &nbsp;&nbsp;-&nbsp;&nbsp; Basseinstellung</li>
+        <li><code><b>bass</b> 0...10</code> bzw. <code><b>bass</b> -4..4</code> auf ST300&nbsp;&nbsp;-&nbsp;&nbsp; Basseinstellung</li>
+        <li>Nur verfügbar auf ST300 <code><b>treble</b> -4 .. 4</code> &nbsp;&nbsp;-&nbsp;&nbsp;Höheneinstellung</li>
+        <li>Nur verfügbar auf ST300 <code><b>dialog</b> on|off</code>  &nbsp;&nbsp;-&nbsp;&nbsp; Einstellung für Sprachausgabe</li>
         <li><code><b>recent</b> 0...15</code> &nbsp;&nbsp;-&nbsp;&nbsp; Anzahl der Namen, die in der recent list in readings aufgef&uuml;hrt werden</li>
         <li><code><b>source</b> bluetooth,bt-discover,aux mode, airplay</code> &nbsp;&nbsp;-&nbsp;&nbsp; lokale Quelle ausw&auml;hlen</li><br>
         <li><code><b>addDLNAServer</b> Name1 [Name2] [Namex]</code> &nbsp;&nbsp;-&nbsp;&nbsp; DLNA server Name1 (und Name2 bis Namex) zur BOSE Bibliothek hinzuf&uuml;gen</li>
