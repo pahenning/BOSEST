@@ -724,6 +724,10 @@ sub BOSEST_setBassTreble($$$) {
     my ($hash, $value,$type) = @_;
     my ($bass,$treble,$value2,$postXml);
     
+    #Log 1,"====> setBassTreble called with value=$value and type=$type";
+    #Log 1,"====> helper bass ".$hash->{helper}{bassAvailable};
+    #Log 1,"====> helper bass treble ".$hash->{helper}{bassTrebleAvailable};
+    
     if( $hash->{helper}{bassAvailable} == 1 && $type eq "b"){
       #-- readings 0 .. 10
        if( !defined($value) ||  $value > 10 || $value < 1 ){
@@ -805,8 +809,8 @@ sub BOSEST_setDialog($$) {
 sub BOSEST_setMute($$) {
     my ($hash, $mute) = @_;
     
-    if(($mute eq "on" && $hash->{READINGS}{mute}{VAL} eq "false") or
-       ($mute eq "off" && $hash->{READINGS}{mute}{VAL} eq "true") or
+    if(($mute eq "on" && $hash->{READINGS}{mute}{VAL} =~ /((off)|(false))/) or
+       ($mute eq "off" && $hash->{READINGS}{mute}{VAL} =~ /((on)|(true))/) or
        ($mute eq "toggle")) {
         BOSEST_sendKey($hash, "MUTE");
     }
@@ -1991,7 +1995,7 @@ sub BOSEST_parseAndUpdateVolume($$) {
     #-- no need to go via BOSE_XMLUpdate
     readingsBeginUpdate($hash);
     readingsBulkUpdate($hash, "volume", $volume->{actualvolume});
-    readingsBulkUpdate($hash, "mute", $volume->{muteenabled});
+    readingsBulkUpdate($hash, "mute", ($volume->{muteenabled} =~ /((on)|(true))/)?"on":"off");
     readingsEndUpdate($hash, 1);
     return undef;
 }
@@ -2356,11 +2360,12 @@ sub BOSEST_finishedDiscovery($) {
             }
          } elsif($command eq "bassTrebleCapabilities") {
             my $deviceHash = BOSEST_getBosePlayerByDeviceId($hash, $deviceId);
-            #Log 1,"== ".$deviceHash->{NAME}." == finishedDiscovery, now bassTrebleCapabilities ";
+           # Log 1,"== ".$deviceHash->{NAME}." == finishedDiscovery, now bassTrebleCapabilities ";
             #--bass value, min, max, step, treble value, min, max, step
             #  values -100 .. 100 step 25, but slider -4 .. 4
-            if($params[0]){
+            if(defined($params[0])){
               $deviceHash->{helper}{bassTrebleAvailable} = 1; 
+              #Log 1,"======> set bassTrebleAvailable for ".$deviceHash->{NAME}." to 1";
               $deviceHash->{helper}{bassMin} = $params[1];
               $deviceHash->{helper}{bassMax} = $params[2];
               $deviceHash->{helper}{trebleMin} = $params[5];
@@ -2368,12 +2373,13 @@ sub BOSEST_finishedDiscovery($) {
               $deviceHash->{helper}{supportedBassTrebleCmds} = "bass:slider,-4,1,4 treble:slider,-4,1,4";
             }else{
               $deviceHash->{helper}{bassTrebleAvailable} = 0; 
+              #Log 1,"======> set bassTrebleAvailable for ".$deviceHash->{NAME}." to 0";
             }
          } elsif($command eq "dialogCapabilities") {
             my $deviceHash = BOSEST_getBosePlayerByDeviceId($hash, $deviceId);
-            #Log 1,"== ".$deviceHash->{NAME}." == finishedDiscovery, now dialogCapabilities ";
+            Log 1,"== ".$deviceHash->{NAME}." == finishedDiscovery, now dialogCapabilities ";
             #--true
-            if($params[0]){
+            if(defined($params[0])){
               $deviceHash->{helper}{dialogAvailable} = 1; 
               $deviceHash->{helper}{supportedDialogCmds} = "dialog:on,off";
             }else{
