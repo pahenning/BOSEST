@@ -9,3 +9,4 @@ NEW features:
  - BUG:     bass slider appears when capabilties present
  - FEATURE: bass slider and treble slider for ST300 (phenning)
  - FEATURE: set .. dialog  for ST300 added (phenning)
+ - FEATURE: set .. balance for stereo pairs (phenning)
