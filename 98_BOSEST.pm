@@ -8,7 +8,7 @@
 # FHEM module to communicate with BOSE SoundTouch system
 #  $Id: 98_BOSEST.pm 30000 2026-02-01 18:00:00Z phenning $
 #
-# Version: 3.0beta5
+# Version: 3.0beta7
 #
 #############################################################
 #
@@ -32,7 +32,6 @@
 # - set title/album/artist for TTS files (--comment "Title=Title..")
 # - check if Mojolicious should be used for HTTPGET/HTTPPOST
 # - ramp up/down volume support in SetExtensions
-# - dialog mode in save/restore state
 #############################################################
 
 BEGIN {
@@ -63,7 +62,7 @@ my $BOSEST_GOOGLE_NOT_AVAILABLE_TEXT = "Hello, I'm sorry, but Google Translate i
 my $BOSEST_GOOGLE_NOT_AVAILABLE_LANG = "en";
 my $BOSEST_READ_CMDREF_TEXT = "Hello, I'm sorry, but you need to install new libraries, please read command reference.";
 my $BOSEST_READ_CMDREF_LANG = "en";
-my $BOSEST_VERSION = "3.0beta5";
+my $BOSEST_VERSION = "3.0beta7";
 
 #############################################################################
 #
@@ -147,6 +146,7 @@ sub BOSEST_Define($$) {
     #--init supported commands
     $hash->{helper}{supportedSourcesCmds} = "";
     $hash->{helper}{supportedBassTrebleCmds} = "";
+    $hash->{helper}{supportedBalanceCmds} = "";
     $hash->{helper}{supportedDialogCmds} = "";
     
      if (int(@a) < 3) {
@@ -231,7 +231,10 @@ sub BOSEST_Set($@) {
                 "playEverywhere:noArg stopPlayEverywhere:noArg createZone addToZone removeFromZone ".
                 "clock:enable,disable ".
                 "stop:noArg pause:noArg channel:1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20 ".
-                "volume:slider,0,1,100 ".$hash->{helper}{supportedBassTrebleCmds}." ".$hash->{helper}{supportedDialogCmds}." ".
+                "volume:slider,0,1,100 ".
+                $hash->{helper}{supportedBassTrebleCmds}." ".
+                $hash->{helper}{supportedDialogCmds}." ".
+                $hash->{helper}{supportedBalanceCmds}." ".
                 "saveChannel:07,08,09,10,11,12,13,14,15,16,17,18,19,20 ".
                 "origin saveState:noArg restoreState restoreVolAndOff ".
                 "addDLNAServer:".$hash->{helper}{dlnaServers}." ".
@@ -278,6 +281,10 @@ sub BOSEST_Set($@) {
         return "BOSEST: dialog requires on/off/toggle as additional parameter" if(int(@params) < 1);
         #params[0] = dialog value
         BOSEST_setDialog($hash, $params[0]);
+    } elsif($workType eq "balance") {
+        return "BOSEST: balance requires (-7..7) as additional parameter" if(int(@params) < 1);
+        #params[0] = balance value
+        BOSEST_setBalance($hash, $params[0]);
     } elsif($workType eq "mute") {
         return "BOSEST: mute requires on/off/toggle as additional parameter" if(int(@params) < 1);
         #params[0] = mute value
@@ -724,10 +731,6 @@ sub BOSEST_setBassTreble($$$) {
     my ($hash, $value,$type) = @_;
     my ($bass,$treble,$value2,$postXml);
     
-    #Log 1,"====> setBassTreble called with value=$value and type=$type";
-    #Log 1,"====> helper bass ".$hash->{helper}{bassAvailable};
-    #Log 1,"====> helper bass treble ".$hash->{helper}{bassTrebleAvailable};
-    
     if( $hash->{helper}{bassAvailable} == 1 && $type eq "b"){
       #-- readings 0 .. 10
        if( !defined($value) ||  $value > 10 || $value < 1 ){
@@ -736,7 +739,6 @@ sub BOSEST_setBassTreble($$$) {
       }
       $bass = $value - 10;
       $postXml = "<bass>$bass</bass>";
-      #Log 1,"=== ".$hash->{NAME}." ===> setting bass with $postXml";
       if(BOSEST_HTTPPOST($hash, '/bass', $postXml)) {
       }
       #FIXME error handling
@@ -760,7 +762,6 @@ sub BOSEST_setBassTreble($$$) {
         $bass   = $value2*25;
       }
       $postXml = "<audioproducttonecontrols><bass value=\"$bass\"/><treble value=\"$treble\"/></audioproducttonecontrols>";
-      #Log 1,"=== ".$hash->{NAME}." ===> setting audioproducttonecontrols with $postXml";
       if(BOSEST_HTTPPOST($hash, '/audioproducttonecontrols', $postXml)) {
       }
       #FIXME error handling
@@ -797,9 +798,23 @@ sub BOSEST_setDialog($$) {
       $postXml = "<audiodspcontrols audiomode=\"AUDIO_MODE_NORMAL\"/>";
     }
     if($postXml){
-      #Log 1,"=== ".$hash->{NAME}." ===> setting audiodspcontrols with $postXml";
       BOSEST_HTTPPOST($hash, '/audiodspcontrols', $postXml);
     }
+    
+    return undef;
+}
+#############################################################################
+
+sub BOSEST_setBalance($$) {
+    my ($hash, $value) = @_;
+    my $postXml;
+    #-- readings -7 .. 7
+    if(  !defined($value) || $value > 7 || $value < -7 ){
+      Log 1,$hash->{NAME}." invalid argument for balance, must be -7 .. 7";
+      $value = 0;
+    }
+    $postXml = "<balance><targetBalance>$value</targetBalance></balance>";
+    BOSEST_HTTPPOST($hash, '/balance', $postXml);
     
     return undef;
 }
@@ -1042,6 +1057,7 @@ sub BOSEST_saveCurrentState($) {
     $hash->{helper}{savedState}{volume} = ReadingsVal($hash->{NAME}, "volume", 20);
     $hash->{helper}{savedState}{source} = ReadingsVal($hash->{NAME}, "source", "");
     $hash->{helper}{savedState}{dialog} = ReadingsVal($hash->{NAME}, "dialog", "");
+    $hash->{helper}{savedState}{balance} = ReadingsVal($hash->{NAME}, "balance", "");
     $hash->{helper}{savedState}{bass} = ReadingsVal($hash->{NAME}, "bass", "");
     $hash->{helper}{savedState}{treble} = ReadingsVal($hash->{NAME}, "treble", "");
     $hash->{helper}{savedState}{playStatus} = ReadingsVal($hash->{NAME}, "playStatus", "STOP_STATE");
@@ -1061,6 +1077,7 @@ sub BOSEST_restoreSavedState($) {
     
     BOSEST_setVolume($hash, $hash->{helper}{savedState}{volume});
     BOSEST_setDialog($hash, $hash->{helper}{savedState}{dialog});
+    BOSEST_setBalance($hash, $hash->{helper}{savedState}{balance});
     BOSEST_setBassTreble($hash, $hash->{helper}{savedState}{bass},"b");
     BOSEST_setBassTreble($hash, $hash->{helper}{savedState}{treble},"t");
 
@@ -1575,11 +1592,9 @@ sub BOSEST_updateBassTreble($$) {
     my ($hash, $deviceId) = @_;
     if($hash->{helper}{bassAvailable} == 1){
       my $bass = BOSEST_HTTPGET($hash, $hash->{helper}{IP}, "/bass");
-      #Log 1,"===> Calling processXml with ".Dumper($bass);
       BOSEST_processXml($hash, $bass);
     }elsif($hash->{helper}{bassTrebleAvailable} == 1){
       my $basstreble = BOSEST_HTTPGET($hash, $hash->{helper}{IP}, "/audioproducttonecontrols");
-      #Log 1,"===> Calling processXml with ".Dumper($basstreble);
       BOSEST_processXml($hash, $basstreble);
     }
     return undef;
@@ -1590,10 +1605,19 @@ sub BOSEST_updateBassTreble($$) {
 sub BOSEST_updateDialog($$) {
     my ($hash, $deviceId) = @_;
     my $dialog = BOSEST_HTTPGET($hash, $hash->{helper}{IP}, "/audiodspcontrols");
-    #Log 1,"===> Calling processXml with ".Dumper($dialog);
     BOSEST_processXml($hash, $dialog);
     return undef;
 }
+
+#############################################################################
+
+sub BOSEST_updateBalance($$) {
+    my ($hash, $deviceId) = @_;
+    my $balance = BOSEST_HTTPGET($hash, $hash->{helper}{IP}, "/balance");
+    BOSEST_processXml($hash, $balance);
+    return undef;
+}
+
 #############################################################################
 
 sub BOSEST_updateNowPlaying($$) {
@@ -1691,6 +1715,10 @@ sub BOSEST_processXml($$) {
     my ($hash, $wsxml) = @_;
     
     Log3 $hash, 5, "BOSEST: processXml:\n".Dumper($wsxml);
+    #Log3 $hash, 1, "BOSEST: processXml:\n".Dumper($wsxml)
+    #  if( $hash->{DEVICEID} =~ /50338B343509/);
+    #äWARUM WERDEN HIER NUR DATEN von der ST20 geloggt?
+    #Log3 $hash, 1, "BOSEST: processXml: ".$hash->{DEVICEID};
     
     if($wsxml->{updates}) {
         if($wsxml->{updates}->{nowPlayingUpdated}) {
@@ -1722,6 +1750,8 @@ sub BOSEST_processXml($$) {
             BOSEST_updateBassTreble($hash, $hash->{DEVICEID});
         } elsif ($wsxml->{updates}->{audiodspcontrols}) {
             BOSEST_updateDialog($hash, $hash->{DEVICEID});
+        } elsif ($wsxml->{updates}->{balanceUpdated}) {
+            BOSEST_updateBalance($hash, $hash->{DEVICEID});
         } elsif ($wsxml->{updates}->{infoUpdated}) {
             #infoUpdated is just a notification with no data
             BOSEST_updateInfo($hash, $hash->{DEVICEID});
@@ -1731,7 +1761,7 @@ sub BOSEST_processXml($$) {
         } elsif ($wsxml->{updates}->{clockTimeUpdated}) {
             BOSEST_parseAndUpdateClock($hash, $wsxml->{updates}->{clockTimeUpdated});
         } else {
-            Log3 $hash, 4, "BOSEST: Unknown event, please implement:\n".Dumper($wsxml);
+            Log3 $hash, 1, "BOSEST: Unknown event, please implement:\n".Dumper($wsxml);
         }
     } elsif($wsxml->{info}) {
         BOSEST_parseAndUpdateInfo($hash, $wsxml->{info});
@@ -1743,13 +1773,19 @@ sub BOSEST_processXml($$) {
         BOSEST_parseAndUpdatePresets($hash, $wsxml->{presets});
     } elsif($wsxml->{bass}) {
         #Log 1," ==> Calling parseAndUpdateBassTreble with bass";
-        BOSEST_parseAndUpdateBassTreble($hash, $wsxml->{bass});
+        BOSEST_parseAndUpdateBassTreble($hash, $wsxml->{bass})
+          if($hash->{helper}{bassAvailable} || $hash->{helper}{bassTrebleAvailable});
     } elsif($wsxml->{audioproducttonecontrols}) {
         #Log 1," ==> Calling parseAndUpdateBassTreble with audioproducttonecontrols";
-        BOSEST_parseAndUpdateBassTreble($hash, $wsxml->{audioproducttonecontrols});
+        BOSEST_parseAndUpdateBassTreble($hash, $wsxml->{audioproducttonecontrols})
+          if($hash->{helper}{bassTrebleAvailable});
     } elsif($wsxml->{audiodspcontrols}) {
         #Log 1," ==> Calling parseAndUpdateDialog with audiodspcontrols";
-        BOSEST_parseAndUpdateDialog($hash, $wsxml->{audiodspcontrols});
+        BOSEST_parseAndUpdateDialog($hash, $wsxml->{audiodspcontrols})
+          if($hash->{helper}{dialogAvailable});
+    } elsif($wsxml->{balance}) {
+        BOSEST_parseAndUpdateBalance($hash, $wsxml->{balance})
+          if($hash->{helper}{balanceAvailable});
     } elsif($wsxml->{zone}) {
         BOSEST_parseAndUpdateZone($hash, $wsxml->{zone});
     } elsif($wsxml->{sources}) {
@@ -2004,7 +2040,7 @@ sub BOSEST_parseAndUpdateVolume($$) {
 
 sub BOSEST_parseAndUpdateBassTreble($$) {
     my ($hash, $basstreble) = @_;
-    #Log 1,"=====> parseAndUpdateBassTreble with ".Dumper($basstreble);
+    #-- no need to go via BOSE_XMLUpdate
     readingsBeginUpdate($hash);
     if($hash->{helper}{bassAvailable} == 1){
       my $currBass = $basstreble->{actualbass} + 10;
@@ -2012,12 +2048,10 @@ sub BOSEST_parseAndUpdateBassTreble($$) {
     }elsif($hash->{helper}{bassTrebleAvailable} == 1){
       my $currBass = $basstreble->{bass}->{value}/25;
       my $currTreble = $basstreble->{treble}->{value}/25;
-      #Log 1,"##########> Updating bass with $currBass and treble with $currTreble";
       readingsBulkUpdate($hash, "bass", $currBass);
       readingsBulkUpdate($hash, "treble", $currTreble);
     }
     readingsEndUpdate($hash, 1);
-    
     return undef;
 }
 
@@ -2025,8 +2059,15 @@ sub BOSEST_parseAndUpdateBassTreble($$) {
 
 sub BOSEST_parseAndUpdateDialog($$) {
     my ($hash, $dialog) = @_;
-    #Log 1,"=====> parseAndUpdateDialog with ".Dumper($dialog);
     readingsSingleUpdate($hash, "dialog", ($dialog->{audiomode} eq "AUDIO_MODE_DIALOG")?"on":"off",1);
+    return undef;
+}
+
+#############################################################################
+
+sub BOSEST_parseAndUpdateBalance($$) {
+    my ($hash, $balance) = @_;
+    readingsSingleUpdate($hash, "balance", $balance->{actualBalance},1);
     return undef;
 }
 
@@ -2194,7 +2235,6 @@ sub BOSEST_handleDeviceByIp {
     
     #--set supported bass capabilities
     my $bassCapabilities = BOSEST_HTTPGET($hash, $ip, "/bassCapabilities");
-    #Log 1,"==bassCapabilities ".$info->{name}." ============> ".Dumper($bassCapabilities);
     $return .= "|bassCapabilities|$info->{deviceID}";
     if($bassCapabilities->{bassCapabilities}) {
       my $bassCap = $bassCapabilities->{bassCapabilities};
@@ -2205,7 +2245,6 @@ sub BOSEST_handleDeviceByIp {
         $return .= ",".$bassCap->{bassAvailable}.",,,";
         #-- bassTreble only if not bass only
         my $bassTrebleCapabilities = BOSEST_HTTPGET($hash, $ip, "/audioproducttonecontrols");
-        #Log 1,"==bassTrebleCapabilities ".$info->{name}." ============> ".Dumper($bassTrebleCapabilities);
         if($bassTrebleCapabilities->{audioproducttonecontrols}) {
           $return .= "|bassTrebleCapabilities|$info->{deviceID},".
           $bassTrebleCapabilities->{audioproducttonecontrols}->{bass}->{value}.",".
@@ -2219,15 +2258,25 @@ sub BOSEST_handleDeviceByIp {
         }
       }
     }
-    #Log 1,"==bass".$info->{name}." ==> $return\n";
     
     #--set supported dialog capabilities
     my $dialogCapabilities = BOSEST_HTTPGET($hash, $ip, "/audiodspcontrols");
-    #Log 1,"==dialogCapabilities ".$info->{name}." ============> ".Dumper($dialogCapabilities);
     if($dialogCapabilities->{audiodspcontrols}) {
           $return .= "|dialogCapabilities|$info->{deviceID},true";
      }
-    #Log 1,"==dialog".$info->{name}." ==> $return\n";
+   
+    #--set supported balance capabilities
+    my $balanceCapabilities = BOSEST_HTTPGET($hash, $ip, "/balance");
+    $return .= "|balanceCapabilities|$info->{deviceID}";
+    if($balanceCapabilities->{balance}) {
+      my $balCap = $balanceCapabilities->{balance};
+      if( $balCap->{balanceAvailable} eq "true"){
+        $return .= ",".$balCap->{balanceAvailable}.",".$balCap->{balanceMin}.",".
+          $balCap->{balanceMax}.",".$balCap->{balanceDefault};
+      }else{
+        $return .= ",".$balCap->{balanceAvailable}.",,,";
+      }
+    }
 
     #TODO create own function (add own DLNA server)
     my $myIp = BOSEST_getMyIp($hash);
@@ -2365,7 +2414,6 @@ sub BOSEST_finishedDiscovery($) {
             #  values -100 .. 100 step 25, but slider -4 .. 4
             if(defined($params[0])){
               $deviceHash->{helper}{bassTrebleAvailable} = 1; 
-              #Log 1,"======> set bassTrebleAvailable for ".$deviceHash->{NAME}." to 1";
               $deviceHash->{helper}{bassMin} = $params[1];
               $deviceHash->{helper}{bassMax} = $params[2];
               $deviceHash->{helper}{trebleMin} = $params[5];
@@ -2373,17 +2421,29 @@ sub BOSEST_finishedDiscovery($) {
               $deviceHash->{helper}{supportedBassTrebleCmds} = "bass:slider,-4,1,4 treble:slider,-4,1,4";
             }else{
               $deviceHash->{helper}{bassTrebleAvailable} = 0; 
-              #Log 1,"======> set bassTrebleAvailable for ".$deviceHash->{NAME}." to 0";
             }
          } elsif($command eq "dialogCapabilities") {
             my $deviceHash = BOSEST_getBosePlayerByDeviceId($hash, $deviceId);
-            Log 1,"== ".$deviceHash->{NAME}." == finishedDiscovery, now dialogCapabilities ";
             #--true
             if(defined($params[0])){
               $deviceHash->{helper}{dialogAvailable} = 1; 
               $deviceHash->{helper}{supportedDialogCmds} = "dialog:on,off";
             }else{
               $deviceHash->{helper}{dialogAvailable} = 0; 
+            }
+         } elsif($command eq "balanceCapabilities") {
+            my $deviceHash = BOSEST_getBosePlayerByDeviceId($hash, $deviceId);
+
+            #--balanceAvailable, balanceMin, balanceMax, balanceDefault
+            #  values -7 .. 7
+            if($params[0] eq "true") {
+              $deviceHash->{helper}{balanceAvailable} = 1; 
+              $deviceHash->{helper}{balanceMin} = $params[1];
+              $deviceHash->{helper}{balanceMax} = $params[2];
+              $deviceHash->{helper}{balanceDefault} = $params[3];
+              $deviceHash->{helper}{supportedBalanceCmds} = "balance:slider,-7,1,7";
+            }else{
+              $deviceHash->{helper}{balanceAvailable} = 0;
             }
         } elsif($command eq "supportedSources") {
             my $deviceHash = BOSEST_getBosePlayerByDeviceId($hash, $deviceId);
@@ -2466,6 +2526,9 @@ sub BOSEST_updateIP($$$) {
         Log3 $hash, 5, "BOSEST: BOSEST_updateDialog";
         #Log 1, "+++++++++++++++++> updateDialog ".$deviceHash->{NAME};
         BOSEST_updateDialog($deviceHash, $deviceID);
+        Log3 $hash, 5, "BOSEST: BOSEST_updateBalance";
+        Log 1, "+++++++++++++++++> updateBalance ".$deviceHash->{NAME};
+        BOSEST_updateBalance($deviceHash, $deviceID);
         #get current zone settings
         Log3 $hash, 5, "BOSEST: BOSEST_updateZone";
         BOSEST_updateZone($deviceHash, $deviceID);
@@ -2742,16 +2805,13 @@ sub BOSEST_HTTPGET($$$) {
         my $xmlres = "";
         eval {
             $xmlres = XMLin($response->decoded_content, KeepRoot => 1, ForceArray => [qw(media_server item member recent preset)], KeyAttr => []);
-        };
-        
+        };   
         if($@) {
             Log3 $hash, 3, "BOSEST: Wrong XML format: $@";
             return undef;
         }
-        
         return $xmlres;
     }
-
     return undef;
 }
 
@@ -2885,6 +2945,7 @@ sub BOSEST_readingsSingleUpdateIfChanged {
         <li><code><b>mute</b> on|off|toggle</code> &nbsp;&nbsp;-&nbsp;&nbsp; control volume mute</li>
         <li><code><b>shuffle</b> on|off</code> &nbsp;&nbsp;-&nbsp;&nbsp; control shuffle mode</li>
         <li><code><b>repeat</b> all|one|off</code> &nbsp;&nbsp;-&nbsp;&nbsp; control repeat mode</li>
+        <li><code><b>balance</b> -7 .. 7</code> &nbsp;&nbsp;-&nbsp;&nbsp;set the left-right balance</li>
         <li><code><b>bass</b> 0...10</code> resp. <code><b>bass</b> -4..4</code> on ST300&nbsp;&nbsp;-&nbsp;&nbsp; set the bass level</li>
         <li>only available on ST300 <code><b>treble</b> -4 .. 4</code> &nbsp;&nbsp;-&nbsp;&nbsp;set the treble level</li>
         <li>only available on ST300 <code><b>dialog</b> on|off</code>  &nbsp;&nbsp;-&nbsp;&nbsp; setting for speech output</li>
@@ -3018,6 +3079,7 @@ sub BOSEST_readingsSingleUpdateIfChanged {
         <li><code><b>mute</b> on|off|toggle</code> &nbsp;&nbsp;-&nbsp;&nbsp; Stummschaltung</li>
         <li><code><b>shuffle</b> on|off</code> &nbsp;&nbsp;-&nbsp;&nbsp; Zufallswiedergabe</li>
         <li><code><b>repeat</b> all|one|off</code> &nbsp;&nbsp;-&nbsp;&nbsp; Wiederholung</li>
+        <li><code><b>balance</b> -7 .. 7</code> &nbsp;&nbsp;-&nbsp;&nbsp;Links-Rechts-balance</li>
         <li><code><b>bass</b> 0...10</code> bzw. <code><b>bass</b> -4..4</code> auf ST300&nbsp;&nbsp;-&nbsp;&nbsp; Basseinstellung</li>
         <li>Nur verfügbar auf ST300 <code><b>treble</b> -4 .. 4</code> &nbsp;&nbsp;-&nbsp;&nbsp;Höheneinstellung</li>
         <li>Nur verfügbar auf ST300 <code><b>dialog</b> on|off</code>  &nbsp;&nbsp;-&nbsp;&nbsp; Einstellung für Sprachausgabe</li>
