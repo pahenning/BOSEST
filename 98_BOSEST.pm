@@ -1761,7 +1761,7 @@ sub BOSEST_processXml($$) {
         } elsif ($wsxml->{updates}->{clockTimeUpdated}) {
             BOSEST_parseAndUpdateClock($hash, $wsxml->{updates}->{clockTimeUpdated});
         } else {
-            Log3 $hash, 1, "BOSEST: Unknown event, please implement:\n".Dumper($wsxml);
+            Log3 $hash, 3, "BOSEST: Unknown event, please implement:\n".Dumper($wsxml);
         }
     } elsif($wsxml->{info}) {
         BOSEST_parseAndUpdateInfo($hash, $wsxml->{info});
@@ -2521,13 +2521,10 @@ sub BOSEST_updateIP($$$) {
         BOSEST_updatePresets($deviceHash, $deviceID);
         #get current bass and treble settings
         Log3 $hash, 5, "BOSEST: BOSEST_updateBassTreble";
-        #Log 1, "+++++++++++++++++> updateBassTreble ".$deviceHash->{NAME};
         BOSEST_updateBassTreble($deviceHash, $deviceID);
         Log3 $hash, 5, "BOSEST: BOSEST_updateDialog";
-        #Log 1, "+++++++++++++++++> updateDialog ".$deviceHash->{NAME};
         BOSEST_updateDialog($deviceHash, $deviceID);
         Log3 $hash, 5, "BOSEST: BOSEST_updateBalance";
-        Log 1, "+++++++++++++++++> updateBalance ".$deviceHash->{NAME};
         BOSEST_updateBalance($deviceHash, $deviceID);
         #get current zone settings
         Log3 $hash, 5, "BOSEST: BOSEST_updateZone";
