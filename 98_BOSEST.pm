@@ -8,7 +8,7 @@
 # FHEM module to communicate with BOSE SoundTouch system
 #  $Id: 98_BOSEST.pm 30000 2026-02-01 18:00:00Z phenning $
 #
-# Version: 3.0beta7
+# Version: 3.0beta8
 #
 #############################################################
 #
@@ -62,7 +62,7 @@ my $BOSEST_GOOGLE_NOT_AVAILABLE_TEXT = "Hello, I'm sorry, but Google Translate i
 my $BOSEST_GOOGLE_NOT_AVAILABLE_LANG = "en";
 my $BOSEST_READ_CMDREF_TEXT = "Hello, I'm sorry, but you need to install new libraries, please read command reference.";
 my $BOSEST_READ_CMDREF_LANG = "en";
-my $BOSEST_VERSION = "3.0beta7";
+my $BOSEST_VERSION = "3.0beta8";
 
 #############################################################################
 #
@@ -225,6 +225,7 @@ sub BOSEST_Set($@) {
 
     my $list = "on:noArg off:noArg power:noArg play:noArg ".
                 "playPause:noArg ".
+                "playNotification:noArg ".
                 "mute:on,off,toggle recent source:".$hash->{helper}{supportedSourcesCmds}.
                 " shuffle:on,off repeat:all,one,off ".
                 "nextTrack:noArg prevTrack:noArg playTrack speak speakOff ".
@@ -328,6 +329,8 @@ sub BOSEST_Set($@) {
         BOSEST_pause($hash);
     } elsif($workType eq "playPause") {
         BOSEST_playPause($hash);
+    } elsif($workType eq "playNotification") {
+        BOSEST_playNotification($hash);
     } elsif($workType eq "power") {
         BOSEST_power($hash);
     } elsif($workType eq "on") {
@@ -925,6 +928,14 @@ sub BOSEST_setPreset($$) {
 
 #############################################################################
 
+sub BOSEST_playNotification($) {
+    my ($hash) = @_;
+    my $ret = BOSEST_HTTPGET($hash, $hash->{helper}{IP}, "/playNotification");
+    return undef;
+}
+
+#############################################################################
+
 sub BOSEST_play($) {
     my ($hash) = @_;
     BOSEST_sendKey($hash, "PLAY");
@@ -1060,6 +1071,7 @@ sub BOSEST_saveCurrentState($) {
     $hash->{helper}{savedState}{balance} = ReadingsVal($hash->{NAME}, "balance", "");
     $hash->{helper}{savedState}{bass} = ReadingsVal($hash->{NAME}, "bass", "");
     $hash->{helper}{savedState}{treble} = ReadingsVal($hash->{NAME}, "treble", "");
+    $hash->{helper}{savedState}{origin} = ReadingsVal($hash->{NAME}, "origin", "");
     $hash->{helper}{savedState}{playStatus} = ReadingsVal($hash->{NAME}, "playStatus", "STOP_STATE");
     $hash->{helper}{savedState}{contentItemItemName} = ReadingsVal($hash->{NAME}, "contentItemItemName", "");
     $hash->{helper}{savedState}{contentItemType} = ReadingsVal($hash->{NAME}, "contentItemType", "");
@@ -1080,7 +1092,7 @@ sub BOSEST_restoreSavedState($) {
     BOSEST_setBalance($hash, $hash->{helper}{savedState}{balance});
     BOSEST_setBassTreble($hash, $hash->{helper}{savedState}{bass},"b");
     BOSEST_setBassTreble($hash, $hash->{helper}{savedState}{treble},"t");
-
+    readingsSingleUpdate($hash,"origin",$hash->{helper}{savedState}{origin},0);
     #-- switch off when source was off
     if($hash->{helper}{savedState}{source} eq "STANDBY" or $hash->{helper}{savedState}{source} eq "INVALID_SOURCE") {
       BOSEST_off($hash);
@@ -1096,7 +1108,6 @@ sub BOSEST_restoreSavedState($) {
     } elsif($hash->{helper}{savedState}{playStatus} eq "PAUSE_STATE") {
         InternalTimer(gettimeofday()+0.8, "BOSEST_pause", $hash, 0);
     }
-    
     return undef;
 }
 
@@ -1108,6 +1119,7 @@ sub BOSEST_restoreVolumeAndOff($) {
     BOSEST_setVolume($hash, $hash->{helper}{savedState}{volume});
     BOSEST_setBassTreble($hash, $hash->{helper}{savedState}{bass},"b");
     BOSEST_setBassTreble($hash, $hash->{helper}{savedState}{treble},"t");
+    readingsSingleUpdate($hash,"origin",$hash->{helper}{savedState}{origin},0);
 
     BOSEST_setContentItem($hash, $hash->{helper}{savedState}{contentItemItemName},
               $hash->{helper}{savedState}{contentItemType},
@@ -1462,6 +1474,7 @@ sub BOSEST_playInfo($){
   my $retl;
   
   #-- current state
+  my $pst = ReadingsVal($name,"playStatus","");
   my $cur = ReadingsVal($name,"state","unknown");
   my $cha = ReadingsVal($name,"channel","");
   my $itm = ReadingsVal($name,"contentItemItemName", "");
@@ -1472,12 +1485,36 @@ sub BOSEST_playInfo($){
   my $trk = ReadingsVal($name,"track","");
   my $art = ReadingsVal($name,"artist","");
   my $sna = ReadingsVal($name,"stationName","");
+  my $pli = ReadingsVal($name,"playinfosrc","");
+  my $cov;
+  
+  #-- check if this comes from a Fritz
 
   #-- return values
-  if( $cur eq "playing" ){
-    #-- STORED_MUSIC: track and artist separately
+  if( $cur eq "playing" || $cur eq "buffering" ){
+    #-- STORED_MUSIC: 
     if( $src =~ /STORED.*/ ){
-      $retl = "playing <i>".$trk."</i><br>by <i>".$art."</i>";
+      #-- really stored music => pli is empty or == none
+      if( $pli eq "" || $pli eq "none"){
+          $retl = "playing <i>".$trk."</i><br>by <i>".$art."</i>";
+      }else{
+        #Log 1,"BOSEST: Obtaining title / track from $pli";
+        if ($pli =~ /scraper\.onlineradio/i){
+          ($trk,$art,$cov) = BOSEST_SCRAPERGET($pli);
+          readingsBeginUpdate($hash);
+          readingsBulkUpdate($hash, "track", $trk);
+          readingsBulkUpdate($hash, "artist", $art);
+          readingsBulkUpdate($hash, "art", $cov);
+          readingsBulkUpdate($hash, "artStatus", "IMAGE_PRESENT");
+          readingsEndUpdate($hash, 1);
+          $retl = "playing on <i>".$itm.": ".$trk."</i><br>by <i>".$art."</i>";
+          #Log 1,"====> pli gives trk=$trk art=$art cov=$cov";
+        }else{
+          Log 1,"BOSEST: cannot interpret playinfo source";
+        }
+      }
+      return $retl;
+    #-- will no longer work soon
     #-- TUNEIN: track is the radio station, artist consists of artist - title
     }elsif( $src =~ /TUNEIN.*/ ){
       my @aaa = split(" - ",$art); 
@@ -1499,6 +1536,7 @@ sub BOSEST_playInfo($){
   }elsif( $cur eq "online" ){
     $retl = $cur;
   }else{
+    #Log 1,"====> Playinfo fallback $cur";
     $retl = $cur;
   }
   return $retl;
@@ -2170,13 +2208,13 @@ sub BOSEST_parseAndUpdateNowPlaying($$) {
     $hash->{helper}{sent_on} = 0;
     
     my $pi=BOSEST_playInfo($hash);
+    readingsBeginUpdate($hash);
     readingsBulkUpdate($hash,"playinfo1",$pi);
     $pi =~ s/playing( on)? //;
     $pi =~ s/\(\d\d\d\d\)//;
     $pi =~ s/<br>/ /;
     $pi =~ s/\s/\&nbsp;/g;
     readingsBulkUpdate($hash,"playinfo2",$pi);
-    
     readingsEndUpdate($hash, 1);
     
     return undef;
@@ -2812,6 +2850,7 @@ sub BOSEST_HTTPGET($$$) {
     return undef;
 }
 
+
 #############################################################################
 
 sub BOSEST_HTTPPOST($$$) {
@@ -2843,6 +2882,48 @@ sub BOSEST_HTTPPOST($$$) {
     }
     
     return undef;
+}
+
+#############################################################################
+
+sub BOSEST_SCRAPERGET($) {
+    my ($getURI) = @_;
+    # Sicherheit: nur scraper.onlineradio URLs erlauben
+    #return undef if ($getURI !~ /scraper\.onlineradio/i);
+
+    my $ua = LWP::UserAgent->new(
+        timeout => 10,
+        agent   => "FHEM-BOSEST/1.0"
+    );
+
+    my $req = HTTP::Request->new(GET => $getURI);
+    my $response = $ua->request($req);
+
+    return undef unless $response->is_success;
+
+    my $json;
+    eval {
+        $json = decode_json($response->decoded_content);
+    };
+    if ($@ || !$json) {
+        Log3 undef, 3, "BOSEST_SCRAPERGET: JSON decode error: $@";
+        return undef;
+    }
+
+    # Felder extrahieren (je nach Sender leicht unterschiedlich)
+    my $title  = $json->{title}   // '';
+    my $artist = $json->{iArtist} // '';
+    my $cover  = $json->{iImg}    // '';
+
+    # Fallback: wenn title bereits "Artist - Title" enthält
+    if (!$artist && $title =~ /(.*?)\s*-\s*(.*)/) {
+        $artist = $1;
+        $title  = $2;
+    # Fallback: wenn title bereits "Artist - Title" enthält
+    }elsif( $title =~ /(.*?)\s*-\s*(.*)/) {
+        $title  = $2;
+    }
+    return ($title, $artist, $cover);
 }
 
 #############################################################################
@@ -2924,12 +3005,13 @@ sub BOSEST_readingsSingleUpdateIfChanged {
         <li><code><b>off</b></code> &nbsp;&nbsp;-&nbsp;&nbsp; turn the device off</li>
         <li><code><b>power</b></code> &nbsp;&nbsp;-&nbsp;&nbsp; toggle on/off</li>
         <li><code><b>volume</b> [0...100] [+x|-x]</code> &nbsp;&nbsp;-&nbsp;&nbsp; set the volume level in percentage or change volume by &plusmn;x from current level</li>
-        <li><code><b>channel</b> 0...20</code> &nbsp;&nbsp;-&nbsp;&nbsp; select present to play</li>
+        <li><code><b>channel</b> 0...20</code> &nbsp;&nbsp;-&nbsp;&nbsp; select preset to play</li>
         <li><code><b>saveChannel</b> 07...20</code> &nbsp;&nbsp;-&nbsp;&nbsp; save current channel to channel 07 to 20</li>
         <li><code><b>play</b></code> &nbsp;&nbsp;-&nbsp;&nbsp; start to play </li>
         <li><code><b>pause</b></code> &nbsp;&nbsp;-&nbsp;&nbsp; pause the playback</li>
 
-        <li><code><b>playpause</b></code> &nbsp;&nbsp;-&nbsp;&nbsp; toggle play/pause</li>
+        <li><code><b>playPause</b></code> &nbsp;&nbsp;-&nbsp;&nbsp; toggle play/pause</li>
+        <li><code><b>playNotification</b></code> &nbsp;&nbsp;-&nbsp;&nbsp; play short notification sound</li>
         <li><code><b>stop</b></code> &nbsp;&nbsp;-&nbsp;&nbsp; stop playback</li><li><code><b>nextTrack</b></code> &nbsp;&nbsp;-&nbsp;&nbsp; play next track</li>
         <li><code><b>prevTrack</b></code> &nbsp;&nbsp;-&nbsp;&nbsp; play previous track</li>
         <li><code><b>playTrack </b> name|location|source[|sourceAccount]</code> &nbsp;&nbsp;-&nbsp;&nbsp; searches per DNLA for the track title/album/artist and plays it <br>
@@ -3006,14 +3088,14 @@ sub BOSEST_readingsSingleUpdateIfChanged {
   <ul>
   	<ul>
       <li><code><b>staticIPs</b> IP-Address [,IP-Address]</code>&nbsp;&nbsp;-&nbsp;&nbsp; Manually define the used IP address(es) (comma separated) of your BOSE devices. Should be used only, if BOSEST device detection doesn't work in your network (e.g. several subnets on server, subnet not directly connected, ...) <br>Example: <code>attr bosesystem staticIPs 192.168.1.52,192.168.1.53</code></li>
-      <li><code><b>speakChannel</b> channel(s)</code>&nbsp;&nbsp;-&nbsp;&nbsp; speaks channel/present name bevor starting a playback, useful for SoundTouch without display (comma separated or range: e.g.&nbsp;<code>2,3,5,6 </code> or <code>1-6</code> ). TTS must be installed.</li>
+      <li><code><b>speakChannel</b> channel(s)</code>&nbsp;&nbsp;-&nbsp;&nbsp; speaks channel/presen name bevor starting a playback, useful for SoundTouch without display (comma separated or range: e.g.&nbsp;<code>2,3,5,6 </code> or <code>1-6</code> ). TTS must be installed.</li>
       <li><code><b>auto-zone</b> on|off</code>  &nbsp;&nbsp;-&nbsp;&nbsp; automatic start  multiroom zone play, if speakers are playing the same, according to "contentItemLocation"; (default: off)</li>
       <li><code><b>originHandler</b> function($DEVICE,$ORIGIN,...)</code> &nbsp;&nbsp;-&nbsp;&nbsp; name of an external perl function for selection of music.</li>
       <li><code><b>ttsDirectory</b> "directory"</code> &nbsp;&nbsp;-&nbsp;&nbsp; set DLNA TTS directory. FHEM user needs permissions to write to that directory. </li>
       <li><code><b>ttsLanguage </b> en|de|xx</code> &nbsp;&nbsp;-&nbsp;&nbsp; set default TTS language (default: en)</li>
       <li><code><b>ttsSpeakOnError</b> 0|1</code> &nbsp;&nbsp;-&nbsp;&nbsp; 0=disable to speak "not available" text</li>
       <li><code><b>ttsVolume</b> [0...100] [+x|-x]</code> &nbsp;&nbsp;-&nbsp;&nbsp; set the TTS volume level in percentage or change volume by ±x from current level</li>         
-      <li><code><b>Channel_07</b> to <b>Channel_20</b> name|location|source|[sourceAccount]</code> &nbsp;&nbsp;-&nbsp;&nbsp; define present 07 to 20 <br>When you play something, you can find  ContentItemLocationName, ContentItemLocation,  etc. in the readings. These data can be used here to define the present. </li>
+      <li><code><b>Channel_07</b> to <b>Channel_20</b> name|location|source|[sourceAccount]</code> &nbsp;&nbsp;-&nbsp;&nbsp; define preset 07 to 20 <br>When you play something, you can find  ContentItemLocationName, ContentItemLocation,  etc. in the readings. These data can be used here to define the preset. </li>
     </ul>
   </ul><br>
 </ul>
@@ -3058,11 +3140,12 @@ sub BOSEST_readingsSingleUpdateIfChanged {
         <li><code><b>off</b></code> &nbsp;&nbsp;-&nbsp;&nbsp; Lautsprecher ausschalten</li>
         <li><code><b>power</b></code> &nbsp;&nbsp;-&nbsp;&nbsp; Wechselt zw. on und off</li>
         <li><code><b>volume</b> [0...100] [+x|-x]</code> &nbsp;&nbsp;-&nbsp;&nbsp; Lautst&auml;rke setzen (direkt oder als &plusmn;x Differenz zur aktuellen Lautst&auml;rke) </li>
-        <li><code><b>channel</b> 0...20</code> &nbsp;&nbsp;-&nbsp;&nbsp; Present ausw&auml;hlen</li>
-        <li><code><b>saveChannel</b> 07...20</code> &nbsp;&nbsp;-&nbsp;&nbsp; Aktuelle Wiedergabe als Present 07 bis 20 speichern</li>
+        <li><code><b>channel</b> 0...20</code> &nbsp;&nbsp;-&nbsp;&nbsp; Preset ausw&auml;hlen</li>
+        <li><code><b>saveChannel</b> 07...20</code> &nbsp;&nbsp;-&nbsp;&nbsp; Aktuelle Wiedergabe als Preset 07 bis 20 speichern</li>
         <li><code><b>play</b></code> &nbsp;&nbsp;-&nbsp;&nbsp; Startet die Wiedergabe </li>
         <li><code><b>pause</b></code> &nbsp;&nbsp;-&nbsp;&nbsp; Pausiert die Wiedergabe</li>
-        <li><code><b>playpause</b></code> &nbsp;&nbsp;-&nbsp;&nbsp; Wechselt zw. play und pause</li>
+        <li><code><b>playPause</b></code> &nbsp;&nbsp;-&nbsp;&nbsp; Wechselt zw. play und pause</li>
+        <li><code><b>playNotification</b></code> &nbsp;&nbsp;-&nbsp;&nbsp; Spielt kurzen Signalton</li>
         <li><code><b>stop</b></code> &nbsp;&nbsp;-&nbsp;&nbsp; Stoppt die Wiedergabe</li><li><code><b>nextTrack</b></code> &nbsp;&nbsp;-&nbsp;&nbsp; N&auml;chsten Titel spielen</li>
         <li><code><b>prevTrack</b></code> &nbsp;&nbsp;-&nbsp;&nbsp; Vorherigen Titel spielen</li>
         <li><code><b>playTrack </b> name|location|source[|sourceAccount]</code> &nbsp;&nbsp;-&nbsp;&nbsp; Sucht per DNLA nach dem Titel/Album/Artist und spielt ihn ab
@@ -3137,14 +3220,14 @@ sub BOSEST_readingsSingleUpdateIfChanged {
       <ul>
       	<ul>
       		<li><code><b>staticIPs</b> IP-Address [,IP-Address]</code>&nbsp;&nbsp;-&nbsp;&nbsp; Manuelle Angabe der IP Adresse(n). Sollte nur verwendet werden, wenn die automatiche Erkennung nicht funktioniert. (z.B. bei mehreren Sub-Netzwerken oder wenn Teile des Netzwerks manuell verbunden werden, ...) <br>Beispiel: <code>attr bosesystem staticIPs 192.168.1.52,192.168.1.53</code></li>
-      		<li><code><b>speakChannel</b> channel(s) </code>&nbsp;&nbsp;-&nbsp;&nbsp; Ansage des aktuellen Present vor der Wiedergabe, sinnvoll f&uuml;r SoundTouch Lautsprecher ohne Display (Angabe komma-separiert oder als Bereich: z.B.&nbsp;<code>2,3,5,6 </code> oder <code>1-6</code> ). TTS muss eingerichtet sein.</li>
+      		<li><code><b>speakChannel</b> channel(s) </code>&nbsp;&nbsp;-&nbsp;&nbsp; Ansage des aktuellen Preset vor der Wiedergabe, sinnvoll f&uuml;r SoundTouch Lautsprecher ohne Display (Angabe komma-separiert oder als Bereich: z.B.&nbsp;<code>2,3,5,6 </code> oder <code>1-6</code> ). TTS muss eingerichtet sein.</li>
       		<li><code><b>auto-zone</b> on|off</code>  &nbsp;&nbsp;-&nbsp;&nbsp; "&Uuml;berall Wiedergabe" automatisch starten, wenn Lautsprecher das gleiche wiedergeben ("contentItemLocation" ist identisch); (Standardwert: off)</li>
               <li><code><b>originHandler</b> function($DEVICE,$ORIGIN,...)</code> &nbsp;&nbsp;-&nbsp;&nbsp; Name einer externen Perl-Funktion zur Musikauswahl</li>
       		<li><code><b>ttsDirectory</b> "directory"</code> &nbsp;&nbsp;-&nbsp;&nbsp; Angabe des DLNA TTS Verzeichnisses. Der FHEM user muss Schreibrechte in diesem Verzeichnis haben.</li>
        		<li><code><b>ttsLanguage </b> en|de|xx</code> &nbsp;&nbsp;-&nbsp;&nbsp; Standardsprache f&uuml;r TTS setzen (default: en)</li>
        		<li><code><b>ttsSpeakOnError</b> 0|1</code> &nbsp;&nbsp;-&nbsp;&nbsp; 0= Ansage "not available" unterdr&uuml;cken</li>
        		<li><code><b>ttsVolume</b> [0...100] [+x|-x]</code> &nbsp;&nbsp;-&nbsp;&nbsp; Lautst&auml;rke setzen (direkt oder als &plusmn;x Differnez zur aktuellen Lautst&auml;rke)</li>
-       		<li><code><b>Channel_07</b> to <b>Channel_20</b> name|location|source|[sourceAccount]</code> &nbsp;&nbsp;-&nbsp;&nbsp; Festlegen der Present 07 bis 20 <br>Bei Wiedergabe kann in den readings "ContentItemLocationName, ContentItemLocation,  etc. " ausgelesen werden. Dies Daten k&ouml;nnen dann verwendet werden, um die Presents zu belegen.</li>
+       		<li><code><b>Channel_07</b> to <b>Channel_20</b> name|location|source|[sourceAccount]</code> &nbsp;&nbsp;-&nbsp;&nbsp; Festlegen der Preset 07 bis 20 <br>Bei Wiedergabe kann in den readings "ContentItemLocationName, ContentItemLocation,  etc. " ausgelesen werden. Dies Daten k&ouml;nnen dann verwendet werden, um die Presets zu belegen.</li>
       	</ul>
       </ul><br>
 </ul>
