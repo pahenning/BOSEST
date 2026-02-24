@@ -10,3 +10,5 @@ NEW features:
  - FEATURE: bass slider and treble slider for ST300 (phenning)
  - FEATURE: set .. dialog  for ST300 added (phenning)
  - FEATURE: set .. balance for stereo pairs (phenning)
+ - FEATURE: show title, artist and image for non-tunein radio stations via reading playinfosrc
+ - FEATURE: set .. playNotification to play a short ping tone
