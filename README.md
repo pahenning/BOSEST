@@ -6,9 +6,8 @@ NEW features:
  - FEATURE: add PRODUCT TV and HDMI_1 to source for ST300 (FlatTV)
  - FEATURE: set ... origin <string> added (phenning)
  - FEATURE: playinfo1 and playinfo2 readings added (phenning)
- - BUG:     bass slider appears when capabilties present
  - FEATURE: bass slider and treble slider for ST300 (phenning)
  - FEATURE: set .. dialog  for ST300 added (phenning)
  - FEATURE: set .. balance for stereo pairs (phenning)
  - FEATURE: show title, artist and image for non-tunein radio stations via reading playinfosrc
- - FEATURE: set .. playNotification to play a short ping tone
+ - FEATURE: set .. playNotification to play a short ping tone (phenning)
