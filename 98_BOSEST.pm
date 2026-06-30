@@ -2,13 +2,13 @@
 #
 # BOSEST.pm 
 #
-# Version 3.x by others
+# Version 3.0 by Prof.Dr. Peter A. Henning & others
 # Version 1-2 by Dominik Karall, 2016-2017
 #
 # FHEM module to communicate with BOSE SoundTouch system
-#  $Id: 98_BOSEST.pm 30000 2026-02-01 18:00:00Z phenning $
+#  $Id: 98_BOSEST.pm 30000 2026-06-30 18:00:00Z phenning $
 #
-# Version: 3.0beta8
+# Version: 3.0
 #
 #############################################################
 #
@@ -26,6 +26,10 @@
 #  but WITHOUT ANY WARRANTY; without even the implied warranty of
 #  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 #  GNU General Public License for more details.
+#
+#############################################################
+#
+# No part of this software has been written by an AI
 #
 #############################################################
 # TODO
@@ -62,7 +66,7 @@ my $BOSEST_GOOGLE_NOT_AVAILABLE_TEXT = "Hello, I'm sorry, but Google Translate i
 my $BOSEST_GOOGLE_NOT_AVAILABLE_LANG = "en";
 my $BOSEST_READ_CMDREF_TEXT = "Hello, I'm sorry, but you need to install new libraries, please read command reference.";
 my $BOSEST_READ_CMDREF_LANG = "en";
-my $BOSEST_VERSION = "3.0beta8";
+my $BOSEST_VERSION = "3.0";
 
 #############################################################################
 #
